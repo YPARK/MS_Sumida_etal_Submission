@@ -1,0 +1,510 @@
+---
+title: "Cell type annotation"
+author: Yongjin Park
+theme: jekyll-theme-minimal
+date: "`r Sys.Date()`"
+bibliography: "reference.bib"
+---
+
+```{r GlobOpt, include = FALSE}
+################################################################
+fig.dir = 'Fig/STEP2/'
+dir.create(fig.dir, recursive = TRUE, showWarnings = FALSE)
+knitr::opts_knit$set(eval.after = 'fig.cap')
+knitr::opts_chunk$set(warning = FALSE, message = FALSE, fig.path = fig.dir)
+knitr::opts_chunk$set(fig.width=8, fig.height=8)
+options(stringsAsFactors = FALSE)
+FIG.CAP = '**Fig.**'
+
+library(tidyverse)
+library(data.table)
+library(patchwork)
+source("Util-rmd.R")
+.fread <- function(...) fread(..., header=FALSE)
+.fwrite <- function(...) fwrite(..., quote=FALSE, sep="\t", row.names = FALSE, col.names = FALSE)
+.read.mat <- function(...) .fread(...) %>% as.matrix
+.read.vec <- function(...) .fread(...) %>% unlist(use.names=FALSE)
+```
+
+```{r include=FALSE}
+plt.scatter.ct.2 <- function(.ct.show, .assign.tab, .mtx,
+                             m1x = "CD25",
+                             m1y = "CD127",
+                             m2x = "CD45RO",
+                             m2y = "CD45RA") {
+
+    .idx <- data.table(tag = colnames(.mtx)) %>%
+        mutate(j = 1:n()) %>% 
+        left_join(.assign.tab[as.character(celltype) %in% .ct.show]) %>%
+        select(j, celltype, prob)
+
+    .dt <- data.table(m1x = .mtx["anti_" %&% m1x, .idx$j],
+                      m1y = .mtx["anti_" %&% m1y, .idx$j],
+                      m2x = .mtx["anti_" %&% m2x, .idx$j],
+                      m2y = .mtx["anti_" %&% m2y, .idx$j],
+                      prob = .idx$prob,
+                      celltype = factor(.idx$celltype, .ct.show))
+    .mean.dt <-
+        .dt[, .(m1x = sum(m1x * prob) / sum(prob),
+                m1y = sum(m1y * prob) / sum(prob),
+                m2x = sum(m2x * prob) / sum(prob),
+                m2y = sum(m2y * prob) / sum(prob)),
+            by = .(celltype)]
+    .med.dt <-
+        .dt[, .(m1x = median(m1x),
+                m1y = median(m1y),
+                m2x = median(m2x),
+                m2y = median(m2y)),
+            by = .(celltype)]
+    .add.lab <- function(.plt) {
+        .plt +
+            theme_classic() +
+            theme(axis.text = element_text(size=6)) +
+            scale_x_continuous(labels=function(x) num.sci(10^x)) +
+            scale_y_continuous(labels=function(x) num.sci(10^x)) +
+            facet_grid(.~celltype) +
+            geom_density_2d_filled(colour="white", size=.2, show.legend = FALSE) +
+            geom_point(data=.med.dt, colour=2, pch=3, size=2) +
+            geom_abline(slope=1, size=.1, colour="white")
+    }
+    p1 <- (ggplot(.dt, aes(x=log10(1+m1x), y=log10(1+m1y))) %>% .add.lab) +
+        xlab(m1x) + ylab(m1y)
+    p2 <- (ggplot(.dt, aes(x=log10(1+m2x), y=log10(1+m2y))) %>% .add.lab) +
+        xlab(m2x) + ylab(m2y)
+    p1/p2
+}
+```
+
+# Round 1: Top-level cell type annotation
+
+* nTconv : CD3+, CD4+, CD8-, CD25-/CD127+, CD45RA+/CD45RO-
+* mTconv : CD3+, CD4+, CD8-, CD25-/CD127+, CD45RA-/CD45RO+
+* nTreg : CD3+, CD4+, CD8-, CD25+/CD127-, CD45RA+/CD45RO-
+* mTreg : CD3+, CD4+, CD8-, CD25+/CD127-, CD45RA-/CD45RO+
+
+```{sh run_bbknn_total, messages=FALSE}
+mkdir -p result/step2/bbknn/
+
+[ -f result/step2/matrix.batch.gz ] || \
+	gzip -cd result/step1/matrix_final.cols.gz | \
+		awk -F'_' '{ print $2 }' | \
+		gzip -c > result/step2/matrix.batch.gz
+
+[ -f result/step2/bbknn/total.mtx.gz ] || \
+	mmutil_bbknn \
+		--mtx result/step1/matrix_final.mtx.gz \
+		--col result/step1/matrix_final.cols.gz \
+		--batch result/step2/matrix.batch.gz \
+		--knn 100 --rank 100 --log_scale \
+		--out result/step2/bbknn/total \
+		2> result/step2/bbknn/total.log
+```
+
+```{sh run_annotation}
+mkdir -p result/step2/assignment/
+
+[ -f result/step2/assignment/round1.annot.gz ] || \
+	mmutil_annotate_col \
+		--svd_u result/step2/bbknn/total.svd_U.gz \
+		--svd_d result/step2/bbknn/total.svd_D.gz \
+		--svd_v result/step2/bbknn/total.factors.gz \
+ 		--row result/step1/matrix_final.rows.gz \
+		--col result/step2/bbknn/total.cols.gz \
+ 		--ann marker/surface_round1_positive.txt \
+ 		--anti marker/surface_round1_negative.txt \
+ 		--em_iter 1000 --kappa_max 100 --em_tol 1e-8 \
+ 		--out result/step2/assignment/round1 \
+		2> result/step2/assignment/round1.log
+```
+
+
+```{sh take_protein_data}
+if ! [ -f result/step2/protein.mtx.gz ] ; then
+    gzip -cd result/step1/matrix_final.rows.gz | \
+        awk '/anti_/ || /CCR/ || /CXCR/' | \
+        gzip > result/step2/protein.select.gz
+
+    mmutil_select_row \
+        result/step1/matrix_final.mtx.gz \
+        result/step1/matrix_final.rows.gz \
+        result/step1/matrix_final.cols.gz \
+        result/step2/protein.select.gz \
+        result/step2/protein
+fi
+```
+
+
+```{r read_protein_data}
+prot.raw.mtx <- Matrix::readMM("result/step2/protein.mtx.gz") %>% as.matrix()
+rownames(prot.raw.mtx) <- .fread("result/step2/protein.rows.gz") %>% unlist
+colnames(prot.raw.mtx) <- .fread("result/step2/protein.cols.gz") %>% unlist
+
+features <- .fread("result/step1/matrix_final.rows.gz") %>% unlist
+.idx <- which(str_starts(features, "anti_"))
+.rows <- features[.idx]
+U <- .fread("result/step2/bbknn/total.svd_U.gz") %>% as.matrix
+U <- U[.idx, , drop = FALSE]
+D <- .fread("result/step2/bbknn/total.svd_D.gz") %>% as.matrix
+V <- .fread("result/step2/bbknn/total.factors.gz") %>% as.matrix
+
+prot.mtx <- sweep(U, 2, D, `*`) %*% t(V)
+rownames(prot.mtx) <- .rows
+colnames(prot.mtx) <- .fread("result/step2/bbknn/total.cols.gz") %>% unlist
+```
+
+```{r}
+.col <- c("tag", "celltype", "prob", "ln.prob")
+annot.dt <- .fread("result/step2/assignment/round1.annot.gz", col.names=.col)
+annot.dt[, c("barcode","batch") := tstrsplit(tag, split="_")]
+```
+
+```{r Fig_round1_cdmarker_raw, fig.width=6, fig.height=4, results="asis"}
+.ct <- c("mTreg","nTreg","mTconv","nTconv")
+plt <- plt.scatter.ct.2(.ct, annot.dt, prot.raw.mtx)
+print(plt)
+.file <- fig.dir %&% "/Fig_round1_cdmarker_raw.pdf"
+.gg.save(filename = .file, plot = plt, width=6, height=4)
+```
+
+```{r Fig_round1_cdmarker_bbknn, fig.width=6, fig.height=4, results="asis"}
+.ct <- c("mTreg","nTreg","mTconv","nTconv")
+plt <- plt.scatter.ct.2(.ct, annot.dt, pmax(exp(prot.mtx) - 1, 0))
+print(plt)
+.file <- fig.dir %&% "/Fig_round1_cdmarker_bbknn.pdf"
+.gg.save(filename = .file, plot = plt, width=6, height=4)
+```
+
+## UMAP to confirm cell type assignment results
+
+```{r include=FALSE}
+plot.three.umap <- function(.umap, .assign.dt, .col.file, .palette = "Paired") {
+
+    .valid <- apply(scale(as.matrix(.umap)), 1, function(x) all(abs(x) < 3)) %>%
+        which
+
+    .umap.dt <-
+        .fread(.col.file, col.names="cell") %>%
+        cbind(.umap) %>%
+        as.data.table
+
+    .umap.dt <- .umap.dt[.valid, ]
+
+    .umap.dt[, c("barcode", "batch") := tstrsplit(cell, split="_")]
+
+    .umap.dt <-
+        .assign.dt %>%
+        filter(celltype != "CD8") %>%
+        left_join(.umap.dt) %>%
+        mutate(batch = as.integer(batch)) %>%
+        left_join(fread("data/hashtag.tsv.gz", header=TRUE)) %>%
+        select(-label) %>%
+        mutate(batch = '#' %&% batch) %>%
+        mutate(batch = as.factor(batch)) %>%
+        na.omit
+
+    nn <- nrow(.umap.dt)
+    p1 <- .gg.plot(.umap.dt[sample(nn), ], aes(x=V1, y=V2)) +
+        geom_point(aes(colour=celltype), size=.7, stroke=0) +
+        xlab("umap 1") + ylab("umap 2") +
+        scale_colour_brewer(palette=.palette)
+    p2 <- .gg.plot(.umap.dt[sample(nn), ], aes(x=V1, y=V2)) +
+        geom_point(aes(colour=batch), size=.7, stroke=0) +
+        xlab("umap 1") + ylab("umap 2") +
+        scale_colour_brewer(palette="Spectral")
+    p3 <- .gg.plot(.umap.dt[sample(nn), ], aes(x=V1, y=V2)) +
+        geom_point(aes(colour=disease), size=.7, stroke=0) +
+        scale_colour_manual(values = c("gray90","#F8766D")) +
+        xlab("umap 1") + ylab("umap 2")
+    plt <- p1/p2/p3
+    return(plt)
+}
+
+read.umap <- function(svd.file, out.file, npc = Inf, ...) {
+    dir.create(dirname(out.file), recursive=TRUE, showWarnings=FALSE)
+    if(!file.exists(out.file)) {
+        .xx <- .fread(svd.file) %>% as.matrix
+        npc <- min(ncol(.xx), npc)
+        .xx <- .xx[, 1:npc, drop = FALSE]
+        .umap <- uwot::umap(.xx, metric="cosine",
+                            n_threads = 15,
+                            fast_sgd=TRUE,
+                            verbose=TRUE,
+                            ...)
+        .fwrite(.umap, file=out.file)
+        .umap.dt <- .read.mat(out.file)
+    } else {
+        .umap.dt <- .read.mat(out.file)
+    }
+    return(.umap.dt)
+}
+```
+
+```{r Fig_annotation_umap, fig.width=3.5, fig.height=8, results="asis"}
+svd.file <- "result/step2/bbknn/total.factors.gz"
+out.file <- "result/step2/umap/bbknn_total.gz"
+
+.umap.dt <- read.umap(svd.file, out.file, npc=10)
+
+.col.file <- "result/step1/matrix_final.cols.gz"
+
+plt <- plot.three.umap(.umap.dt, annot.dt, .col.file)
+
+print(plt)
+
+.file <- fig.dir %&% "/Fig_annotation_umap_bbknn.pdf"
+.gg.save(filename = .file, plot = plt, width=3.5, height=8)
+```
+
+## Q/C by marker genes
+
+```{sh}
+mkdir -p result/step2/marker/
+
+echo "FOXP3 ID3 BACH2 CXCR3 PRDM1 SGK1 TCF7 LEF1 SELL IL2RA IL7R IKZF2 CCR6 CCR4 CCR7 CTLA4 HLA-DRA anti_CD25 anti_CD127 anti_CD183 anti_CD196 anti_CD197 anti_CD194 anti_CD45RA anti_CD45RO anti_HLA" > result/step2/marker/marker.select
+
+if ! [ -f result/step2/marker/matrix.mtx.gz ] ; then
+	mmutil_select_row \
+		result/step1/matrix_final.mtx.gz \
+		result/step1/matrix_final.rows.gz \
+		result/step1/matrix_final.cols.gz \
+		result/step2/marker/marker.select \
+		result/step2/marker/matrix
+fi
+```
+
+
+```{r include = FALSE}
+.markers <-
+    .fread("result/step2/marker/matrix.rows.gz") %>%
+    unlist
+
+.tags <-
+    .fread("result/step2/marker/matrix.cols.gz") %>%
+    unlist
+
+.ct <- c("mTreg","nTreg","mTconv","nTconv")
+
+marker.dt <-
+    Matrix::readMM("result/step2/marker/matrix.mtx.gz") %>%
+    as.matrix() %>%
+    t() %>%
+    as.data.table() %>%
+    (function(x) { colnames(x) <- .markers; x }) %>%
+    mutate(tag = .tags) %>%
+    (function(x) { 
+        .fread("result/step2/bbknn/total.cols.gz",
+               col.names = "tag") %>%
+            cbind(.umap.dt) %>%
+            rename(UMAP1 = V1, UMAP2 = V2) %>% 
+            left_join(x)
+    }) %>%
+    filter(abs(scale(UMAP1)) < 3) %>% 
+    filter(abs(scale(UMAP2)) < 3) %>% 
+    as.data.table %>%
+    melt(id.vars = c("tag", "UMAP1", "UMAP2"),
+         variable.name = "marker",
+         value.name = "expr") %>%
+    left_join(annot.dt) %>% 
+    mutate(expr = if_else(is.na(expr), 0, expr)) %>%
+    na.omit %>%
+    mutate(celltype = factor(celltype, .ct)) %>% 
+    as.data.table
+
+plot.marker.umap <- function(.marker) {
+
+    .dt <- marker.dt[marker == .marker]
+
+    ## handle outliers for better visualization
+    .cutoff <- quantile(.dt$expr, probs = .95, na.rm=TRUE)
+    .cutoff <- max(.cutoff, 3)
+
+    .aes <- aes(x = UMAP1,
+                y = UMAP2,
+                colour = expr)
+
+    .dt <- .dt %>%
+        arrange(expr) %>%
+        mutate(expr = pmin(expr, .cutoff))
+
+    ret <- 
+        ggplot(.dt, .aes) +
+        ggtitle(.marker) + 
+        xlab("UMAP 1") + ylab("UMAP 2") +
+        theme_minimal() +
+        geom_point(stroke=0, size=.7) +
+        theme(legend.key.width = unit(.2, "lines"),
+              legend.key.height = unit(.5, "lines"),
+              legend.title = element_text(size=6),
+              legend.text = element_text(size=5))
+
+    if(str_starts(.marker, "anti_")) {
+        ret <- ret + scale_colour_distiller("", direction=1)
+    } else {
+        ret <- ret + scale_colour_distiller("", palette="RdPu", direction=1)
+    }
+    return(ret)
+}
+```
+
+```{r fig.width=3.2, fig.height=3, results="asis"}
+.markers <- sort(as.character(unique(marker.dt$marker)))
+for(g in .markers){
+    plt <- plot.marker.umap(g)
+    print(plt)
+    .file <- fig.dir %&% "/Fig_marker_" %&% g %&% "_umap.pdf"
+    .gg.save(filename = .file, plot = plt, width=3.2, height=3)    
+}
+```
+
+## Basic statistics for the first round annotation (`r num.int(nrow(annot.dt))` cells)
+
+```{r include=FALSE}
+.sum.stat.batch <- function(.dt) {
+    .dt %>%
+        group_by(batch, disease) %>%
+        mutate(P = 100 * N/sum(N)) %>%
+        arrange(desc(ct)) %>%
+        mutate(Pc = cumsum(P)) %>%
+        ungroup() %>%
+        group_by(batch) %>%
+        mutate(nb = sum(N)) %>%
+        ungroup() %>%
+        mutate(batch = "#" %&% batch %&% " (N=" %&% num.int(nb) %&% ")")
+}
+
+.sum.stat.tot <- function(.dt) {
+    .dt %>%
+        group_by(disease) %>%
+        mutate(P = 100 * N/sum(N)) %>%
+        arrange(desc(ct)) %>%
+        mutate(Pc = cumsum(P)) %>%
+        ungroup()
+}
+
+.plt.sum.stat <- function(.stat) {
+    .gg.plot(.stat, aes(x=disease, y=P, group=ct, fill=celltype)) +
+        facet_grid(.~batch) +
+        geom_bar(stat="identity") +
+        geom_text(aes(y=Pc, label=num.int(N)), size=2) +
+        scale_fill_brewer(palette="Paired") +
+        ylab("cell type composition (%)") +
+        theme(legend.title=element_blank())
+}
+```
+
+```{r}
+.hash.info <-
+    readxl::read_xlsx("data/Hashing list MS Treg project.xlsx", 1) %>%
+    mutate(hash = str_remove(hash,"#")) %>%
+    mutate(hash = as.integer(hash)) %>%
+    rename(Sample = `Cell type`)
+
+.dt <-
+    annot.dt %>%
+    mutate(batch=as.integer(batch)) %>%
+    left_join(fread("data/hashtag.tsv.gz",header=T)) %>%
+    left_join(.hash.info) %>%
+    mutate(ct=factor(celltype, c("nTconv","mTconv","nTreg","mTreg"))) %>%
+    filter(batch != 2, !is.na(ct), !is.na(Sample))
+```
+
+## Combining all the experiments
+
+```{r Fig_count_stat_tot, fig.height=3, fig.width=6, echo = FALSE, results="asis"}
+.stat <-
+    .dt[,
+        .(N = .N),
+        by=.(batch, celltype, ct, disease)] %>%
+    .sum.stat.batch
+
+plt <- .plt.sum.stat(.stat) +
+    ggtitle("Profiled on all the samples")
+
+print(plt)
+
+.file <- fig.dir %&% "/Fig_count_stat_tot.pdf"
+.gg.save(filename = .file, plot = plt, height=3, width=6)
+```
+
+```{r Fig_count_merged_stat_tot, fig.height=3, fig.width=2, echo = FALSE, results="asis"}
+.stat <-
+    .dt[,
+        .(N = .N),
+        by=.(celltype, ct, disease)] %>%
+    .sum.stat.tot %>%
+    mutate(batch = "(N=" %&% num.int(sum(.stat$N)) %&% ")")
+
+plt <- .plt.sum.stat(.stat) +
+    ggtitle("Profiled on all the samples")
+
+print(plt)
+
+.file <- fig.dir %&% "/Fig_count_merged_stat_tot.pdf"
+.gg.save(filename = .file, plot = plt, height=3, width=2)
+```
+
+## Total CD4 samples
+
+```{r Fig_count_stat_cd4, fig.height=3, fig.width=6, echo = FALSE, results="asis"}
+.stat <-
+    .dt[Sample == "Total CD4T cells",
+        .(N = .N),
+        by=.(batch, celltype, ct, disease)] %>%
+    .sum.stat.batch
+
+plt <- .plt.sum.stat(.stat) +
+    ggtitle("Profiled on Total CD4 T-cells")
+
+print(plt)
+
+.file <- fig.dir %&% "/Fig_count_stat_cd4.pdf"
+.gg.save(filename = .file, plot = plt, height=3, width=6)
+```
+
+
+```{r Fig_count_merged_stat_cd4, fig.height=3, fig.width=2, echo = FALSE, results="asis"}
+.stat <-
+    .dt[Sample == "Total CD4T cells", .(N = .N), by=.(celltype, ct, disease)] %>%
+    .sum.stat.tot %>%
+    mutate(batch = "(N=" %&% num.int(sum(.stat$N)) %&% ")")
+
+plt <- .plt.sum.stat(.stat) +
+    ggtitle("Profiled on Total CD4 T-cells")
+
+print(plt)
+
+.file <- fig.dir %&% "/Fig_count_merged_stat_cd4.pdf"
+.gg.save(filename = .file, plot = plt, height=3, width=2)
+```
+
+## CD25 enriched samples
+
+```{r Fig_count_stat_cd25enriched, fig.height=3, fig.width=6, echo = FALSE, results="asis"}
+.stat <-
+    .dt[Sample == "CD25+ CD4T cells",
+        .(N = .N),
+        by=.(batch, celltype, ct, disease)] %>%
+    .sum.stat.batch
+
+plt <- .plt.sum.stat(.stat) +
+    ggtitle("Profiled on the CD25+ enriched")
+print(plt)
+
+.file <- fig.dir %&% "/Fig_count_stat_cd25enriched.pdf"
+.gg.save(filename = .file, plot = plt, height=3, width=6)
+```
+
+```{r Fig_count_merged_stat_cd25enriched, fig.height=3, fig.width=2, echo = FALSE, results="asis"}
+.stat <-
+    .dt[Sample == "CD25+ CD4T cells", .(N = .N), by=.(celltype, ct, disease)] %>%
+    .sum.stat.tot %>%
+    mutate(batch = "(N=" %&% num.int(sum(.stat$N)) %&% ")")
+
+plt <- .plt.sum.stat(.stat) +
+    ggtitle("Profiled on the CD25+ enriched")
+
+print(plt)
+
+.file <- fig.dir %&% "/Fig_count_merged_stat_cd25enriched.pdf"
+.gg.save(filename = .file, plot = plt, height=3, width=2)
+```

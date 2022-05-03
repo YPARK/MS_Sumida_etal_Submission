@@ -1,0 +1,6 @@
+CCR4 Treg1/17
+CCR4 Treg1
+CCR6 Treg1
+CCR6 Treg2
+CXCR3 Treg2
+CXCR3 Treg17

@@ -1,0 +1,13 @@
+anti_CD127 mTconv
+anti_CD127 nTconv
+anti_CD25 mTreg
+anti_CD25 nTreg
+anti_CD4 mTconv
+anti_CD4 mTreg
+anti_CD4 nTconv
+anti_CD4 nTreg
+anti_CD45RA nTconv
+anti_CD45RA nTreg
+anti_CD45RO mTconv
+anti_CD45RO mTreg
+anti_CD8A CD8

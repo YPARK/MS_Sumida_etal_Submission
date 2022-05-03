@@ -1,0 +1,15 @@
+celltype	colors
+Actviated B	#a65628
+Classical monocytes	#fccde5
+Memory Treg	#33a02c
+Naive B	#222222
+Naive CD4+ Teff	#ff7f00
+Naive CD8+ T	#01665e
+Naive Treg	#b2df8a
+NK	#f2f2f2
+NonClassical monocytes	#666666
+TFH	#984ea3
+TH1	#fb9a99
+TH1/17	#1f78b4
+TH17	#a6cee3
+TH2	#e31a1c
