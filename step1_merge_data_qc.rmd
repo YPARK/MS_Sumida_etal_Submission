@@ -6,6 +6,7 @@ date: "`r Sys.Date()`"
 bibliography: "reference.bib"
 ---
 
+
 ```{r GlobOpt, include = FALSE}
 ################################################################
 fig.dir = 'Fig/STEP1/'
@@ -15,17 +16,24 @@ knitr::opts_chunk$set(warning = FALSE, message = FALSE, fig.path = fig.dir)
 knitr::opts_chunk$set(fig.width=8, fig.height=8)
 options(stringsAsFactors = FALSE)
 FIG.CAP = '**Fig.**'
-
-library(tidyverse)
 library(data.table)
+library(dplyr)
 library(patchwork)
+library(mmutilR)
 source("Util-rmd.R")
+```
+
+```{r helper_functions}
 .fread <- function(...) fread(..., header=FALSE)
 .fwrite <- function(...) fwrite(..., quote=FALSE, sep="\t", row.names = FALSE, col.names = FALSE)
 .read.mat <- function(...) .fread(...) %>% as.matrix
 .read.vec <- function(...) .fread(...) %>% unlist(use.names=FALSE)
+.files.exist <- function(...){
+    lapply(..., file.exists) %>%
+        unlist() %>%
+        all()
+}
 ```
-
 
 # Outline
 
@@ -37,163 +45,121 @@ source("Util-rmd.R")
 
 ## Combine both protein and RNA features
 
-```{bash merging_data, message=FALSE}
-mkdir -p result/step1/
-
-[ -f result/step1/features.tsv.gz ] || \
-	cp data/features.tsv.gz result/step1/features.tsv.gz
-
-[ -f result/step1/matrix.mtx.gz ] || \
-	mmutil_merge_col \
-		result/step1/features.tsv.gz 0 result/step1/matrix \
-		data/batch_3.mtx.gz \
-		data/batch_3.feature.tsv.gz \
-		data/batch_3.barcode.tsv.gz \
-		data/batch_4.mtx.gz \
-		data/batch_4.feature.tsv.gz \
-		data/batch_4.barcode.tsv.gz \
-		data/batch_5.mtx.gz \
-		data/batch_5.feature.tsv.gz \
-		data/batch_5.barcode.tsv.gz \
-		data/batch_6.mtx.gz \
-		data/batch_6.feature.tsv.gz \
-		data/batch_6.barcode.tsv.gz \
-		data/batch_7.mtx.gz \
-		data/batch_7.feature.tsv.gz \
-		data/batch_7.barcode.tsv.gz \
-		2> /dev/null
-
-[ -f result/step1/matrix.cols.gz ] || \
-    gzip -cd result/step1/matrix.columns.gz | \
-		awk '{ print $1 "_" ($2 + 2) }' | \
-		gzip -c > result/step1/matrix.cols.gz
-
-[ -f result/step1/matrix.batch.gz ] || \
-	gzip -cd result/step1/matrix.cols.gz | \
-		awk -F '_' '{ print $2 }' | \
-		gzip -c > result/step1/matrix.batch.gz
+```{r merge_data}
+.mkdir("result/step1")
+.out.hdr <- "result/step1/matrix"
+.data <- fileset.list(.out.hdr)
+if(!.files.exist(.data)){
+    bats <- hdrs <- str_c("data/batch_", 3:7)
+    .data <-
+        rcpp_mmutil_merge_file_sets(r_headers=hdrs,
+                                    r_batches=3:7,
+                                    r_mtx=str_c(hdrs, ".mtx.gz"),
+                                    r_row=str_c(hdrs, ".feature.tsv.gz"),
+                                    r_col=str_c(hdrs, ".barcode.tsv.gz"),
+                                    output=.out.hdr)
+}
 ```
+
+
+```{r}
+.info <- rcpp_mmutil_info(.data$mtx)
+```
+
+* Total `r num.int(.info$max.col)` cells
+
+* Total `r num.int(.info$max.row)` features
+
+* Total  `r num.int(.info$max.elem)` non-zero elements
 
 ## Take RNA-seq data with basic Q/C steps
 
-```{sh take_rna_data, message=FALSE}
-if ! [ -f result/step1/rna.mtx.gz ] ; then
-
-	gzip -cd result/step1/matrix.rows.gz | \
-		awk '!/anti_/ && !/MT-/' | \
-		gzip > result/step1/rna.genes.gz
-
-	mmutil_select_row \
-		result/step1/matrix.mtx.gz \
-		result/step1/matrix.rows.gz \
-		result/step1/matrix.cols.gz \
-		result/step1/rna.genes.gz \
-		result/step1/rna 2> /dev/null
-
-	mmutil_index_col result/step1/rna.mtx.gz 2> /dev/null
-fi
+```{r take_rna_data}
+.genes <-
+    .fread(.data$row, col.names="feat") %>%
+    filter(!str_starts(feat, "anti_")) %>% 
+    filter(!str_starts(feat, "MT-")) %>%
+    unlist()
+.mt.genes <- 
+    .fread(.data$row, col.names="feat") %>%
+    filter(str_starts(feat, "MT-")) %>%
+    unlist()
+.rna.hdr <- "result/step1/rna"
+.mt.hdr <- "result/step1/mt"
+.rna.data <- fileset.list(.rna.hdr)
+.mt.data <- fileset.list(.mt.hdr)
+if(!.files.exist(.rna.data)){
+    .rna.data <-
+        rcpp_mmutil_copy_selected_rows(.data$mtx,
+                                       .data$row,
+                                       .data$col,
+                                       .genes,
+                                       .rna.hdr)
+}
+if(!.files.exist(.mt.data)){
+    .mt.data <-
+        rcpp_mmutil_copy_selected_rows(.data$mtx,
+                                       .data$row,
+                                       .data$col,
+                                       .mt.genes,
+                                       .mt.hdr)
+}
 ```
 
 
-
-```{sh take_mt_genes, message=FALSE}
-if ! [ -f result/step1/mt.mtx.gz ] ; then
-
-	gzip -cd result/step1/matrix.rows.gz | \
-		awk '/MT-/' | \
-		gzip -c > result/step1/mt.genes.gz
-
-	mmutil_select_row \
-		result/step1/matrix.mtx.gz \
-		result/step1/matrix.rows.gz \
-		result/step1/matrix.cols.gz \
-		result/step1/mt.genes.gz \
-		result/step1/mt 2> /dev/null
-
-	mmutil_index_col result/step1/mt.mtx.gz 2> /dev/null
-
-fi
+```{r compute_scores}
+.dt.rna <-
+    rcpp_mmutil_compute_scores(.rna.data$mtx, .rna.data$row, .rna.data$col) %>%
+    (function(x) setDT(x$col))
+.dt.mt <- 
+    rcpp_mmutil_compute_scores(.mt.data$mtx, .mt.data$row, .mt.data$col) %>%
+    (function(x) setDT(x$col))
 ```
 
-
-```{sh compute_cell_score, message=FALSE}
-[ -f result/step1/rna.cell_score.gz ] || \
-	mmutil_col_score \
-		result/step1/rna.mtx.gz \
-		result/step1/rna.cols.gz \
-		result/step1/rna.cell_score.gz 2> /dev/null
-
-[ -f result/step1/mt.cell_score.gz ] || \
-	mmutil_col_score \
-		result/step1/mt.mtx.gz \
-		result/step1/mt.cols.gz \
-		result/step1/mt.cell_score.gz 2> /dev/null
-```
-
-
-```{sh filter_cells_bbknn_svd}
-[ -d result/step1/bbknn ] || mkdir -p result/step1/bbknn
-
-[ -f result/step1/rna.batch.gz ] || \
-	gzip -cd result/step1/rna.cols.gz | \
-		awk -F '_' '{ print $2 }' | \
-		gzip -c > result/step1/rna.batch.gz
-
-[ -f result/step1/bbknn/rna.mtx.gz ] || \
-	mmutil_bbknn --mtx result/step1/rna.mtx.gz \
-				 --col result/step1/rna.cols.gz \
-				 --batch result/step1/rna.batch.gz \
-				 --knn 100 --rank 3 --log_scale \
-				 --out result/step1/bbknn/rna 2> /dev/null
+```{r run_bbknn}
+.factors.file <- "result/step1/bbknn/rna.factors.gz"
+.mkdir(dirname(.factors.file))
+if(!file.exists(.factors.file)){
+    .batches <- .fread(.rna.data$col, col.names="cell") %>%
+        (function(x) {
+            x[, c("barcode", "batch") := tstrsplit(cell, split="[_]")];
+            x$batch
+        })
+    .bbknn <- rcpp_mmutil_bbknn_pca(.rna.data$mtx,
+                                    .batches,
+                                    knn=100, RANK=3,
+                                    TAKE_LN = TRUE)
+    .fwrite(as.data.table(.bbknn$factors), file = .factors.file)
+}
+.factors <- .read.mat(.factors.file) %>% scale
 ```
 
 # 2. Cell Q/C by the number of non-zero elements and mictochondrial activities
 
+
 ```{r cell_score_cutoff}
-.read.score <- function(...) {
-    ret = .fread(...,
-                 col.names=c("cell", "nnz", "ntot", ".mean", ".sd", ".cv"))
-
-    return(ret)
-}
-
-.dt.rna <- .read.score("result/step1/rna.cell_score.gz")
-.dt.mt <- .read.score("result/step1/mt.cell_score.gz")
-
 .file <- "result/step1/qc_table.txt.gz"
-
 if(!file.exists(.file)) {
-
-    .qc.dt <- left_join(.dt.rna, .dt.mt, by="cell", suffix=c(".nonmt", ".mt")) %>%
-        mutate(tot.mt = ntot.mt * .mean.mt) %>%
-        mutate(tot.nonmt = ntot.nonmt * .mean.nonmt) %>%
-        mutate(tot = tot.nonmt + tot.mt) %>%
-        mutate(mito.frac = 100 * tot.mt / tot)
-
-    .factors <- .read.mat("result/step1/bbknn/rna.factors.gz") %>% scale
-
+    .qc.dt <-
+        merge(.dt.rna, .dt.mt, by="name", suffix=c(".nonmt", ".mt")) %>% 
+        mutate(mito.frac = 100 * sum.mt / (sum.nonmt + sum.mt)) %>%
+        as.data.table
     .temp <- .factors %>%
         as.data.table %>%
         (function(x) { colnames(x) <- "PC" %&% 1:ncol(x); x })
-
     .qc.dt <- cbind(.qc.dt, .temp) %>% as.data.table %>% na.omit
-
     set.seed(1)
-
     .x <- .qc.dt$mito.frac
     .kmeans <- kmeans(.x, centers=2, nstart=100)
     k.valid <- which.max(.kmeans$size)
     mito.cutoff <- max(.x[.kmeans$cluster == k.valid])
-
     .y <- .qc.dt$nnz.nonmt
     .kmeans <- kmeans(log10(.y), centers=2, nstart=100)
     k.valid <- which.max(.kmeans$size)
     nnz.cutoff <- max(.y[.kmeans$cluster != k.valid])
-
     .dat <- .qc.dt[, .(PC1, PC2, PC3)] %>% as.matrix
     pc.valid <- apply(scale(.dat), 1, function(x) all(abs(x) < 3)) %>%
         which
-
     .qc.dt <- .qc.dt %>%
         mutate(j = 1:n()) %>%
         mutate(qc = if_else(nnz.nonmt > nnz.cutoff &
@@ -203,7 +169,6 @@ if(!file.exists(.file)) {
                             "fail")) %>%
         dplyr::select(-j) %>%
         as.data.table
-
     fwrite(.qc.dt, .file, col.names = TRUE, row.names = FALSE)
 } else {
     .qc.dt <- fread(.file, header = TRUE)
@@ -214,7 +179,7 @@ if(!file.exists(.file)) {
 .qc.cols <- c("#8856a7", "gray70")
 ```
 
-```{r fig_cell_nnz, fig.width=6, fig.height=3}
+```{r fig_cell_nnz, results="asis", fig.width=6, fig.height=3}
 plt <-
     .gg.plot(.qc.dt, aes(x=nnz.nonmt)) +
     geom_histogram(aes(fill=qc), bins=100, colour="black", size=.1) +
@@ -222,19 +187,13 @@ plt <-
     scale_fill_manual(values = .qc.cols) +
     ylab("number of cells") +
     theme(legend.position="none")
-
 print(plt)
 .file <- fig.dir %&% "/Fig_cell_nnz.pdf"
 .gg.save(filename = .file, plot = plt, width=6, height=3)
 ```
 
-```{r results="asis", echo = FALSE}
-cat("[PDF](" %&% .file %&% ")")
-```
-
-```{r fig_cell_mito, fig.width=6, fig.height=3}
+```{r fig_cell_mito, results="asis", fig.width=6, fig.height=3}
 .lab <- function(x) num.round(pmax(0,exp(x)-1))
-
 plt <-
     .gg.plot(.qc.dt, aes(x=log(1 + mito.frac))) +
     geom_histogram(aes(fill=qc), bins=100, colour="black", size=.1) +
@@ -242,62 +201,77 @@ plt <-
     scale_x_continuous("% mitochondrial activity", labels = .lab) +
     ylab("count of cells") +
     theme(legend.position="none")
-
 print(plt)
 .file <- fig.dir %&% "/Fig_cell_mito.pdf"
 .gg.save(filename = .file, plot = plt, width=6, height=3)
 ```
 
-```{r results="asis", echo = FALSE}
-cat("[PDF](" %&% .file %&% ")")
-```
-
 * Keep `r num.int(nrow(.qc.dt[qc == "pass"]))` cells, discard `r num.int(nrow(.qc.dt[qc == "fail"]))` cells
 
-```{r Fig_svd_batch, fig.width=2, fig.height=2, echo = FALSE}
+```{r Fig_svd_batch, results="asis", fig.width=2, fig.height=2, echo = FALSE}
 .temp <- .qc.dt[qc == "pass"]
-.temp[, c("barcode","batch") := tstrsplit(cell, split="_")]
-
+.temp[, c("barcode","batch") := tstrsplit(`name`, split="_")]
 plt <-
     .gg.plot(.temp[sample(nrow(.temp))], aes(x=PC1, y=PC2)) +
     geom_point(aes(fill=batch), size = 1, pch = 21, stroke=0, show.legend=FALSE) +
     scale_fill_brewer(palette = "Spectral")
-
 print(plt)
 .file <- fig.dir %&% "/Fig_svd_batch.pdf"
 .gg.save(filename = .file, plot = plt, width=2, height=2)
 ```
 
-```{r results="asis", echo = FALSE}
-cat("[PDF](" %&% .file %&% ")")
-```
-
 ## Matrix data after Q/C: `r num.int(nrow(.qc.dt[qc == "pass"]))` cells
 
-```{sh select_qc_cells}
-[ -f result/step1/matrix_qc.select.gz ] || \
-	gzip -cd result/step1/qc_table.txt.gz | \
-		awk -F',' '$NF == "pass" { print $1 }' | \
-		gzip -c > result/step1/matrix_qc.select.gz
-
-[ -f result/step1/matrix_qc.mtx.gz ] || \
-	mmutil_select_col \
-		result/step1/matrix.mtx.gz \
-		result/step1/matrix.cols.gz \
-		result/step1/matrix_qc.select.gz \
-		result/step1/matrix_qc 2> /dev/null
+```{r select_qc_cells}
+.qc.hdr <- "result/step1/matrix_qc"
+.qc.data <- fileset.list(.qc.hdr)
+.qc.cells <- .qc.dt[qc == "pass", .(name)] %>% unlist
+if(!.files.exist(.qc.data)){
+    .qc.data <-
+        rcpp_mmutil_copy_selected_columns(.data$mtx,
+                                          .data$row,
+                                          .data$col,
+                                          .qc.cells,
+                                          .qc.hdr)
+}
 ```
 
-## Gene Q/C to remove genes with too many zeros
-
-```{sh gene_qc_rna_data}
-[ -f result/step1/matrix_final.mtx.gz ] || \
-	mmutil_filter_row --mtx result/step1/matrix_qc.mtx.gz \
-					  --col result/step1/matrix_qc.cols.gz \
-					  --row result/step1/matrix.rows.gz \
-					  --score NNZ \
-					  --cutoff 100 \
-					  --col_cutoff 500 \
-					  --out result/step1/matrix_final 2> /dev/null
+```{r}
+.info <- rcpp_mmutil_info(.qc.data$mtx)
 ```
+
+* Total `r num.int(.info$max.col)` cells
+
+* Total `r num.int(.info$max.row)` features
+
+* Total  `r num.int(.info$max.elem)` non-zero elements
+
+## Feature Q/C to remove features with too many zeros
+
+```{r feature_qc_data}
+.feature.scores <- 
+    rcpp_mmutil_compute_scores(.qc.data$mtx, .qc.data$row, .qc.data$col) %>%
+    (function(x) setDT(x$row))
+.valid.features <- .feature.scores[nnz > 100, .(name)] %>% unlist
+.final.hdr <- "result/step1/matrix_final"
+.final.data <- fileset.list(.final.hdr)
+if(!.files.exist(.final.data)){
+    .final.data <-
+        rcpp_mmutil_copy_selected_rows(.qc.data$mtx,
+                                       .qc.data$row,
+                                       .qc.data$col,
+                                       .valid.features,
+                                       .final.hdr)
+}
+```
+
+```{r}
+.info <- rcpp_mmutil_info(.final.data$mtx)
+```
+
+* Total `r num.int(.info$max.col)` cells
+
+* Total `r num.int(.info$max.row)` features
+
+* Total  `r num.int(.info$max.elem)` non-zero elements
 
