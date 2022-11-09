@@ -22,113 +22,53 @@ source("Util-rmd.R")
 ```
 
 ```{r helper_functions}
-.fread <- function(...) fread(..., header=FALSE)
-.fread.melt <-function(.file, .key, .val) {
-    .ret = .fread(.file)
-    .gather = colnames(.ret)
-    .ret %>%
-        mutate(g = 1:n()) %>%
-        gather_(.key, .val, .gather) %>%
-        as.data.table
-}
-.read.mean.sd <- function(.mean.file, .sd.file, .name) {
-    .mean = .fread.melt(.mean.file, "col", .name)
-    .sd = .fread.melt(.sd.file, "col", .name %&% ".sd")
-    merge(.mean, .sd, by = c("g", "col"))
-}
 .fwrite <- function(...) fwrite(..., quote=FALSE, sep="\t", row.names = FALSE, col.names = FALSE)
 
 .fwrite.safe <- function(.dt, .file, ...) {
     if(!file.exists(.file)) fwrite(.dt, .file, ...)
 }
 
-.read.mat <- function(...) .fread(...) %>% as.matrix
-.read.vec <- function(...) .fread(...) %>% unlist(use.names=FALSE)
-
-
-#' @param data.file E.g., "result/deg/strata.resid_mu.gz"
-#' @param .name E.g., "resid.mu"
-#' @param col.file E.g., "result/deg/strata.mu_cols.gz"
-#' @param row.file E.g., "result/rna_final.rows.gz"
-.read.stat <- function(data.file,
-                       .name,
-                       col.file,
-                       row.file = "result/step4/rna_final.rows.gz") {
-
-    .rows <- .fread(row.file)
-    .cols <- .fread(col.file) %>% unlist
-
-    .fread(data.file, col.names=.cols) %>%
-        mutate(gene = unlist(.rows)) %>%
-        melt(value.name = .name, id.vars = "gene", variable.name = "col") %>%
-        as.data.table
+.files.exist <- function(...){
+    lapply(..., file.exists) %>%
+        unlist() %>%
+        all()
 }
 
-read.deg.result <- function(hdr) {
-
-    .fun <- function(.ext, .name) {
-        .read.stat(hdr %&% .ext,
-                   .name,
-                   hdr %&% ".mu_cols.gz",
-                   hdr %&% ".rows.gz")
-    }
-
-    .cfa <- .fun(".ln_resid_mu.gz", "cfa")
-    .cfa.sd <- .fun(".ln_resid_mu_sd.gz", "cfa.sd")
-
-    .mu <- .fun(".ln_obs_mu.gz", "mu")
-    .mu.sd <- .fun(".ln_obs_mu_sd.gz", "mu.sd")
-
-    .ret <-
-        left_join(.cfa, .cfa.sd) %>%
-        left_join(.mu) %>%
-        left_join(.mu.sd) %>%
-        as.data.table
-
-    .ret[, c("batch","disease","celltype") := tstrsplit(col, split="_")]
-    .ret[, batch := as.integer(batch)]
-    .ret[, col := NULL]
-    
-    return(.ret)
-}
-
-summarize.deg <- function(.dt, expr.cutoff = 1e-4, disease.name = "MS", control.name = "HC") {
-
-    ln.cutoff <- log(expr.cutoff)
+summarize.deg <- function(.dt, tot.cutoff = 1, disease.name = "MS", control.name = "HA") {
 
     ## adjust potential bias
-    .dt[mu >= ln.cutoff, b := mean(cfa), by = .(gene, celltype)]
+    .dt[`tot` >= tot.cutoff, b := mean(cfa), by = .(gene, celltype)]
     .dt[, cfa := cfa - b]
 
-    .sd <- .dt[mu >= ln.cutoff,
+    .sd <- .dt[`tot` >= tot.cutoff,
                .(min.sd = sd(cfa) / sqrt(.N)),
                by = .(gene, celltype)]
 
-    .dt <- .dt %>% 
-        filter(mu >= ln.cutoff) %>% 
+    .dt <- .dt %>%
+        filter(`tot` >= tot.cutoff) %>%
         left_join(.sd) %>%
         mutate(w = 1/(cfa.sd^2 + min.sd^2)) %>%
         as.data.table
 
     ## average disease effect on the disease subjects
     ADD.dt <-
-        .dt[disease == disease.name & mu > ln.cutoff,
+        .dt[disease == disease.name & `tot` >= tot.cutoff,
                .(ADD = sum(cfa * w) / sum(w),
                  ADD.se = sqrt(1/sum(w))),
                by = .(gene, celltype)]
 
     ## average disease effect on the control subjects
     ADC.dt <-
-        .dt[disease == control.name & mu > ln.cutoff,
+        .dt[disease == control.name & `tot` >= tot.cutoff,
                .(ADC = -sum(cfa * w)/ sum(w),
                  ADC.se = sqrt(1/sum(w))),
                by = .(gene, celltype)]
 
     ## average disease effect
     ADE.dt <-
-        .dt[mu > ln.cutoff] %>%
+        .dt[`tot` >= tot.cutoff] %>%
         mutate(cfa.s = if_else(disease == disease.name, 1, -1) * cfa) %>%
-        mutate(mu.s = if_else(disease == disease.name, 1, -1) * mu) %>%
+        mutate(tot.s = if_else(disease == disease.name, 1, -1) * tot) %>%
         as.data.table %>%
         (function(xx) {
             xx[,
@@ -136,8 +76,8 @@ summarize.deg <- function(.dt, expr.cutoff = 1e-4, disease.name = "MS", control.
                  ADE.se = sqrt(1/sum(w))),
                by = .(gene, celltype)
                ]
-        }) %>% 
-        mutate(z = ADE/ADE.se) %>% 
+        }) %>%
+        mutate(z = ADE/ADE.se) %>%
         mutate(pv = 2 * pnorm(abs(z), lower.tail=FALSE)) %>%
         mutate(fwer = p.adjust(pv, "holm")) %>%
         as.data.table
@@ -150,7 +90,7 @@ plot.bulk.sc <- function(.sc, .bulk, fwer.cutoff = .5, qv.cutoff = .5) {
     .dt <- left_join(.bulk, .sc) %>%
         mutate(sc.z = pmin(pmax(z, -10), 10)) %>%
         na.omit %>%
-        arrange(abs(sc.z)) %>% 
+        arrange(abs(sc.z)) %>%
         as.data.table
 
     .dt.show <-
@@ -224,33 +164,33 @@ show.each.gene <- function(g, .data, .stat, .cutoff = 1e-4) {
 
     .dir <- .stat.dt[which.max(abs(.stat.dt$ADE)), .(ADE)] %>%
         unlist
-    
+
     if(.dir > 0) {
 
         .dt <- .dt.g %>%
-            filter(mu > log(.cutoff)) %>% 
-            left_join(.stat.dt) %>% 
-            group_by(disease, celltype) %>% 
+            filter(mu > log(.cutoff)) %>%
+            left_join(.stat.dt) %>%
+            group_by(disease, celltype) %>%
             arrange(cfa) %>%
             mutate(j = 1:n()) %>%
-            ungroup() %>% 
+            ungroup() %>%
             mutate(x = disease %&% "_" %&% j)
 
     } else {
 
         .dt <- .dt.g %>%
-            filter(mu > log(.cutoff)) %>% 
-            left_join(.stat.dt) %>% 
-            group_by(disease, celltype) %>% 
+            filter(mu > log(.cutoff)) %>%
+            left_join(.stat.dt) %>%
+            group_by(disease, celltype) %>%
             arrange(desc(cfa)) %>%
             mutate(j = 1:n()) %>%
-            ungroup() %>% 
+            ungroup() %>%
             mutate(x = disease %&% "_" %&% j)
 
     }
 
     .dt <- .dt %>%
-        mutate(.pv = if_else(is.na(pv), "1", num.sci(pv))) %>% 
+        mutate(.pv = if_else(is.na(pv), "1", num.sci(pv))) %>%
         mutate(.facet = celltype %&% "\n(" %&% .pv %&% ")") %>%
         mutate(ADD.z = ADD/ADD.se, ADC.z = ADC/ADC.se) %>%
         as.data.table
@@ -320,167 +260,124 @@ count.deg <- function(.dt, fwer.cutoff = .05) {
         mutate(direction = factor(direction, c("up", "down"))) %>%
         group_by(celltype) %>%
         arrange(desc(direction)) %>%
-        mutate(nc = cumsum(n)) %>% 
+        mutate(nc = cumsum(n)) %>%
         ungroup
 }
 ```
 
-# Result: MS vs. HC for high-level T-cells
+# Result
 
 ```{r read_annot}
+.annot.file <- "result/step2/assignment/round1.RDS"
+.annot.out <- readRDS(.annot.file)
 .col <- c("tag", "celltype", "prob", "ln.prob")
-annot.dt <- .fread("result/step2/assignment/round1.annot.gz", col.names=.col) %>%
-    mutate(j = 1:n()) %>%
-    as.data.table
-
+annot.dt <- setDT(.annot.out$annotation)
+names(annot.dt) <- .col
 annot.dt[, c("barcode","batch") := tstrsplit(tag, split="_")]
+annot.dt[, j := 1:.N]
+annot.dt[, batch := as.integer(`batch`)]
+
+hash.info <- fread("data/cell_info_batch3-7.csv.gz") %>%
+    rename(tag = cbid, subject = id) %>%
+    mutate(disease = substr(`subject`, 1, 2))
 ```
 
-## DEG MS vs. HC in pseudo-bulk analysis
+```{r prepare_input_data}
+library(mmutilR)
+## This may contain unannotated cells, but will be filtered out
+.mtx.data <- fileset.list("result/step1/rna")
 
-```{r select_deg_cells}
-.mkdir("result/step4/deg")
-.mkdir("result/step4/temp/")
+sort.col <- function(.mat, .cts, .indvs){
 
-.hash <- fread("data/hashtag.tsv.gz", header=TRUE)
-.cols <- .fread("result/step1/matrix_final.cols.gz", col.names="tag")
-.cols[, c("barcode","batch") := tstrsplit(tag, "_")]
-.cols[, batch := as.integer(batch)]
-.cols <- left_join(.cols, .hash) %>% distinct
+    .fun <- function(ct) paste0(.indvs, "_", ct)
 
-.temp <-
-    annot.dt %>%
-    mutate(batch = as.integer(batch)) %>%
-    left_join(.cols) %>%
-    filter(!is.na(disease)) %>%
-    filter(celltype != "CD8") %>%
-    dplyr::select(celltype, tag) %>%
-    distinct()
+    .samples <-
+        lapply(.cts, .fun) %>%
+        do.call(what=c) %>%
+        sort()
 
-.mkdir("result/step4/temp")
-.fwrite(unique(.temp[, .(tag)]), "result/step4/temp/ms_vs_hc.select.gz")
-```
-
-
-```{sh select_annotated_disease_cells}
-[ -d result/step4/deg ] || mkdir -p result/step4/deg/
-[ -d result/step4/aggregate/ ] || mkdir -p result/step4/aggregate/
-
-if ! [ -f result/step4/deg/ms_vs_hc.mtx.gz ] ; then
-	
-	[ -f result/step4/temp/ms_vs_hc.mtx.gz ] || \
-		mmutil_select_col \
-			result/step1/matrix_final.mtx.gz \
-			result/step1/matrix_final.cols.gz \
-			result/step4/temp/ms_vs_hc.select.gz \
-			result/step4/temp/ms_vs_hc \
-		2> /dev/null
-
-	mmutil_filter_row \
-		--mtx result/step4/temp/ms_vs_hc.mtx.gz \
-		--row result/step1/matrix_final.rows.gz \
-		--col result/step4/temp/ms_vs_hc.cols.gz \
-		--score NNZ \
-		--cutoff 100 \
-		--col_cutoff 500 \
-		--out result/step4/deg/ms_vs_hc \
-		2> /dev/null
-
-	rm -f result/step4/temp/ms_vs_hc.*
-fi
-```
-
-```{r create_cfa_input, include = FALSE}
-.cols <- .fread("result/step4/deg/ms_vs_hc.cols.gz", col.names="tag")
-.hash <- fread("data/hashtag.tsv.gz", header=TRUE)
-
-.input <- .cols %>%
-    mutate(.tag = tag) %>%
-    separate(tag, c("barcode", "batch"), sep="[_]") %>%
-    left_join(annot.dt) %>%
-    mutate(batch = as.integer(batch)) %>%
-    left_join(.hash, by = c("barcode", "batch")) %>%
-    mutate(ind = batch %&% "_" %&% disease) %>%
-    as.data.table
-
-.fwrite(.input[,.(.tag, celltype)], "result/step4/deg/ms_vs_hc.annot.gz")
-.fwrite(.input[,.(batch)], "result/step4/deg/ms_vs_hc.batch.gz")
-.fwrite(.input[,.(ind)], "result/step4/deg/ms_vs_hc.ind.gz")
-.fwrite(.input[,.(disease)], "result/step4/deg/ms_vs_hc.trt.gz")
-.fwrite(distinct(.input[,.(celltype)]), "result/step4/deg/ms_vs_hc.lab.gz")
-```
-
-```{sh run_cocoa_ms_vs_hc}
-mkdir -p result/step4/deg
-
-[ -f result/step4/deg/bbknn_ms_vs_hc.factors.gz ] || \
-	mmutil_bbknn \
-		--mtx result/step4/deg/ms_vs_hc.mtx.gz \
-		--col result/step4/deg/ms_vs_hc.cols.gz \
-		--batch result/step4/deg/ms_vs_hc.batch.gz \
-		--knn 100 --rank 10 --log_scale \
-		--out result/step4/deg/bbknn_ms_vs_hc \
-		2> /dev/null
-
-[ -f result/step4/deg/ms_vs_hc.resid_mu.gz ] || \
-	mmutil_cfa_col \
-		--mtx result/step4/deg/ms_vs_hc.mtx.gz \
-		--col result/step4/deg/ms_vs_hc.cols.gz \
-		--annot result/step4/deg/ms_vs_hc.annot.gz \
-		--trt result/step4/deg/ms_vs_hc.trt.gz \
-		--ind result/step4/deg/ms_vs_hc.ind.gz \
-		--lab result/step4/deg/ms_vs_hc.lab.gz \
-		--knn 100 --rank 10 --nthreads 10 \
-		--gamma_a0 1 --gamma_b0 1 --impute_knn \
-		--verbose --log_scale \
-		--out result/step4/deg/ms_vs_hc \
-		2> /dev/null
-```
-
-
-```{r read_ms_vs_hc_results, results="asis", echo = FALSE}
-.mkdir("Tab")
-.file <- "Tab/DEG_MS_vs_HC.txt.gz"
-if(!file.exists(.file)) {
-    deg.dt <-
-        read.deg.result("result/step4/deg/ms_vs_hc") %>%
-        summarize.deg(expr.cutoff = 1e-2)
-
-    .fwrite.safe(deg.dt, .file)
-}
-deg.dt <- fread(.file)
-
-cat("[DEG_MS_vs_HC download]("%&% .file %&% ")\n\n")
-```
-
-
-## Pseudo-bulk data
-
-```{r read_pseudo_bulk_data, results = "asis", echo = FALSE}
-.mkdir("Tab")
-.file <- "Tab/MS_vs_HC_pseudobulk_data.txt.gz"
-if(!file.exists(.file)) {
-    pb.data <- read.deg.result("result/step4/deg/ms_vs_hc")
-    .fwrite.safe(pb.data, .file)
+    .idx <- match(.samples, colnames(.mat))
+    .idx <- .idx[!is.na(.idx)]
+    .mat[, .idx, drop = FALSE]
 }
 
-pb.data <- fread(.file, header=TRUE)
-cat("[DEG_MS_vs_HC pseudo-bulk data download]("%&% .file %&% ")\n\n")
+combine.statistics <- function(.result){
+
+    ret <- lapply(names(.result), function(v) {
+        .mat <- .result[[v]]
+        if(!is.matrix(.mat)) return(NULL)
+        as.data.table(reshape2::melt(.mat, value.name = v))
+    })
+
+    out <- ret[[1]]
+    for(j in 2:length(ret)){
+        if(is.null(out)) {
+            out <- ret[[j]]
+        } else if(!is.null(ret[[j]])) {
+            out <- merge(out, ret[[j]])
+        }
+    }
+    return(out)
+}
 ```
 
-* Error bars in the top panels: 2 times standard error for each sample
+## HC vs. MS Differential Gene Expression
 
-* Error bars in the bottom panels: 3 times standard error for each type of effect
+```{r estimate_ms_vs_hc_data}
+.mkdir("result/step4/deg/")
+.deg.data <- fileset.list("result/step4/deg/hc_ms")
 
-* ADC: Average Disease effect in the Control samples
+if(!.files.exist(.deg.data)){
+    .deg.data <-
+        rcpp_mmutil_copy_selected_columns(.mtx.data$mtx,
+                                          .mtx.data$row,
+                                          .mtx.data$col,
+                                          unique(.celltype[,1]),
+                                          "result/step4/deg/hc_ms")
+}
 
-* ADD: Average Disease effect in the Disease samples
+.celltype <-
+    annot.dt[, .(tag, celltype)] %>%
+    as.data.frame()
+.cell2indv <- annot.dt %>%
+    left_join(hash.info) %>%
+    select(tag, subject) %>%
+    unique() %>%
+    as.data.frame()
 
-* ADE: Average Disease Effect across all the samples
+.deg.stat.file <- "result/step4/deg/hc_ms.RDS"
+if(!.files.exist(.deg.stat.file)){
+    .indv2exp <- .cell2indv %>%
+        select(subject) %>%
+        mutate(disease = substr(`subject`, 1, 2)) %>%
+        as.data.frame()
+    .deg.stat <- make.cocoa(.deg.data, .celltype, .cell2indv, .indv2exp,
+                            knn=100, .rank=10, .take.ln = TRUE,
+                            num.threads=24)
+    saveRDS(.deg.stat, .deg.stat.file)
+}
 
+.deg.stat <- readRDS(.deg.stat.file)
 
+.cts <- unique(unlist(.celltype[,2]))
+.indvs <- sort(unique(.cell2indv[,2]))
 
-## Comparison with the bulk DEG results
+.hc.ms.dt <-
+    list(tot = sort.col(.deg.stat$sum, .cts, .indvs),
+         cfa = sort.col(.deg.stat$resid.ln.mu, .cts, .indvs),
+         cfa.sd = sort.col(.deg.stat$resid.ln.mu.sd, .cts, .indvs)) %>%
+    combine.statistics()
+
+.hc.ms.dt[, c("subject","celltype") := tstrsplit(`Var2`,split="_")]
+.hc.ms.dt[, disease := substr(`subject`,1,2)]
+.hc.ms.dt[, gene := `Var1`]
+.hc.ms.dt[, `Var1` := NULL]
+.hc.ms.dt[, `Var2` := NULL]
+hc.ms.deg <- summarize.deg(.hc.ms.dt)
+```
+
+### Comparison with the bulk DEG results
+
 
 ```{r read_bulk_deg_results}
 read.bulk <- function(.file) {
@@ -500,8 +397,10 @@ bulk.mTconv.dt <- read.bulk(.file)
 #### Memory Treg genes
 
 ```{r}
-.out <- plot.bulk.sc(deg.dt[celltype == "mTreg"],
-                     bulk.mTreg.dt, fwer.cutoff = 1e-2, qv.cutoff = .2)
+.out <- plot.bulk.sc(hc.ms.deg[celltype == "mTreg"],
+                     bulk.mTreg.dt,
+                     fwer.cutoff = 1e-2,
+                     qv.cutoff = .2)
 ```
 
 #### Correlation `r num.round(.out$cor)` with p-value = `r num.sci(.out$cor.pv)`
@@ -515,8 +414,10 @@ print(.out$plt)
 #### Memory Tconv genes
 
 ```{r}
-.out <- plot.bulk.sc(deg.dt[celltype == "mTconv"],
-                     bulk.mTconv.dt, fwer.cutoff = 1e-2, qv.cutoff = .2)
+.out <- plot.bulk.sc(hc.ms.deg[celltype == "mTconv"],
+                     bulk.mTconv.dt,
+                     fwer.cutoff = 1e-2,
+                     qv.cutoff = .2)
 ```
 
 #### Correlation `r num.round(.out$cor)` with p-value = `r num.sci(.out$cor.pv)`
@@ -527,16 +428,17 @@ print(.out$plt)
 .gg.save(filename = .file, plot = .out$plt, width=3, height=5)
 ```
 
-### Found `r num.int(nrow(unique(deg.dt[fwer < .05, .(gene)])))` unique genes strongly perturbed by MS with FWER 5%
+### Found `r num.int(nrow(unique(hc.ms.deg[fwer < .05, .(gene)])))` unique genes strongly perturbed by MS with FWER 5%
 
-* Up-regulated: `r num.int(nrow(unique(deg.dt[fwer < .05 & z > 0, .(gene)])))`
 
-* Down-regulated:  `r num.int(nrow(unique(deg.dt[fwer < .05 & z < 0, .(gene)])))`
+* Up-regulated: `r num.int(nrow(unique(hc.ms.deg[fwer < .05 & z > 0, .(gene)])))`
 
-* Total pairs of genes and cell types: `r num.int(nrow(deg.dt))`
+* Down-regulated:  `r num.int(nrow(unique(hc.ms.deg[fwer < .05 & z < 0, .(gene)])))`
+
+* Total pairs of genes and cell types: `r num.int(nrow(hc.ms.deg))`
 
 ```{r Fig_DEG_count, fig.width=2, fig.height=2, echo = FALSE, results="asis"}
-.df <- count.deg(deg.dt)
+.df <- count.deg(hc.ms.deg)
 
 plt <-
     .gg.plot(.df, aes(x = celltype, y = n, group = direction, fill = direction)) +
@@ -554,7 +456,7 @@ print(plt)
 
 ```{r}
 .multi <-
-    deg.dt[fwer < 1e-2, .(n = .N), by = .(gene)] %>%
+    hc.ms.deg[fwer < 1e-2, .(n = .N), by = .(gene)] %>%
     dplyr::filter(n > 1) %>%
     .select(gene)
 ```
@@ -648,28 +550,28 @@ save.heatmap <- function(.obj, .file) {
 }
 
 .dt <-
-    deg.dt %>%
-    dplyr::filter(!(gene %in% .multi)) %>% 
+    hc.ms.deg %>%
+    dplyr::filter(!(gene %in% .multi)) %>%
     dplyr::rename(hgnc_symbol = gene) %>%
     left_join(fread("data/gene.info.gz")) %>%
     na.omit
 
 .ct.order <- c("mTreg","nTreg","mTconv","nTconv")
 
-go.result.dt <- 
+go.result.dt <-
     lapply(.ct.order,
            function(.ct)
                run.goseq(.dt, .ct, fwer.cutoff = 0.05) %>%
                mutate(celltype = .ct)
            ) %>%
     do.call(what=rbind) %>%
-    mutate(pv = over_represented_pvalue) %>% 
-    mutate(qv = p.adjust(pv, "fdr")) %>% 
+    mutate(pv = over_represented_pvalue) %>%
+    mutate(qv = p.adjust(pv, "fdr")) %>%
     as.data.table
 ```
 
 ```{r Fig_GO_, results = "asis", echo = FALSE}
-plt <- 
+plt <-
     go.result.dt[ontology == "BP"] %>%
     plot.go.heatmap(.ct.order, fdr.cutoff = 0.05, .ntop=15)
 
@@ -677,7 +579,7 @@ plt <-
 save.heatmap(plt, .file)
 cat("[GO BP](" %&% .file %&% ") ")
 
-plt <- 
+plt <-
     go.result.dt[ontology == "MF"] %>%
     plot.go.heatmap(.ct.order, fdr.cutoff = 0.05, .ntop=15)
 
@@ -685,7 +587,7 @@ plt <-
 save.heatmap(plt, .file)
 cat("[GO MF](" %&% .file %&% ") ")
 
-plt <- 
+plt <-
     go.result.dt[ontology == "CC"] %>%
     plot.go.heatmap(.ct.order, fdr.cutoff = 0.05, .ntop=15)
 
@@ -698,7 +600,7 @@ cat("[GO CC](" %&% .file %&% ") ")
 
 ```{r Fig_DEG_example, results="asis", echo = FALSE}
 .genes.ms <-
-    deg.dt[fwer < 0.05 &
+    hc.ms.deg[fwer < 0.05 &
            sign(ADD) == sign(z) &
            sign(ADC) == sign(z),
            .(gene)] %>%
@@ -707,7 +609,7 @@ cat("[GO CC](" %&% .file %&% ") ")
 for(g in .genes.ms){
     .file <- fig.dir %&% "/Fig_DEG_example_" %&% g %&% ".pdf"
     if(!file.exists(.file)) {
-        plt <- show.each.gene(g, pb.data, deg.dt)
+        plt <- show.each.gene(g, pb.data, hc.ms.deg)
         .gg.save(filename = .file, cat.link = FALSE, plot = plt, width=5, height=3)
     }
     cat("[" %&% g %&% "](" %&% .file %&% ") ")

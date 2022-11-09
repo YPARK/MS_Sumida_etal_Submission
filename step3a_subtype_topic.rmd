@@ -1,0 +1,59 @@
+---
+title: "Subtype annotation on Treg cells"
+author: Yongjin Park
+theme: jekyll-theme-minimal
+date: "`r Sys.Date()`"
+bibliography: "reference.bib"
+---
+
+
+```{r GlobOpt, include = FALSE}
+fig.dir = 'Fig/STEP3a/'
+dir.create(fig.dir, recursive = TRUE, showWarnings = FALSE)
+knitr::opts_knit$set(eval.after = 'fig.cap')
+knitr::opts_chunk$set(warning = FALSE, message = FALSE, fig.path = fig.dir)
+knitr::opts_chunk$set(fig.width=8, fig.height=8, results="asis")
+options(stringsAsFactors = FALSE)
+FIG.CAP = '**Fig.**'
+
+library(tidyverse)
+library(data.table)
+library(patchwork)
+source("Util-rmd.R")
+
+.fread <- function(...) fread(..., header=FALSE)
+.fwrite <- function(...) fwrite(..., quote=FALSE, sep="\t", row.names = FALSE, col.names = FALSE)
+.read.mat <- function(...) .fread(...) %>% as.matrix
+.read.vec <- function(...) .fread(...) %>% unlist(use.names=FALSE)
+```
+
+
+
+```{r}
+library(torch)
+library(mmutilR)
+source("torch_model_celltype_etm.R")
+
+encoder.layers <- c(64, 1024, 64) # This is general enough
+
+full.data.hdr <- "result/step1/matrix_final"
+
+full.data <-
+    mmutilR::fileset.list(full.data.hdr) %>%
+    CITEseqData(MY.DEV=torch_device("cuda:1"))
+
+k <- 16
+
+dir.create("result/step3a/", recursive = TRUE, showWarnings = FALSE)
+out.hdr <- paste0("result/step3a/model_", k)
+
+train.model(full.data,
+            k,
+            encoder.layers,
+            model.file = out.hdr %&% ".torch",
+            stat.file = out.hdr %&% ".RDS",
+            max.epoch = 2000,
+            .seed = 177,
+            .lr = 0.01,
+            batch.size = 100)
+```

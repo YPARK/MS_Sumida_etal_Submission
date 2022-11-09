@@ -16,14 +16,20 @@ knitr::opts_chunk$set(fig.width=8, fig.height=8)
 options(stringsAsFactors = FALSE)
 FIG.CAP = '**Fig.**'
 
-library(tidyverse)
 library(data.table)
+library(tidyverse)
 library(patchwork)
+library(mmutilR)
 source("Util-rmd.R")
 .fread <- function(...) fread(..., header=FALSE)
 .fwrite <- function(...) fwrite(..., quote=FALSE, sep="\t", row.names = FALSE, col.names = FALSE)
 .read.mat <- function(...) .fread(...) %>% as.matrix
 .read.vec <- function(...) .fread(...) %>% unlist(use.names=FALSE)
+.files.exist <- function(...){
+    lapply(..., file.exists) %>%
+        unlist() %>%
+        all()
+}
 ```
 
 ```{r include=FALSE}
@@ -82,81 +88,118 @@ plt.scatter.ct.2 <- function(.ct.show, .assign.tab, .mtx,
 * nTreg : CD3+, CD4+, CD8-, CD25+/CD127-, CD45RA+/CD45RO-
 * mTreg : CD3+, CD4+, CD8-, CD25+/CD127-, CD45RA-/CD45RO+
 
-```{sh run_bbknn_total, messages=FALSE}
-mkdir -p result/step2/bbknn/
 
-[ -f result/step2/matrix.batch.gz ] || \
-	gzip -cd result/step1/matrix_final.cols.gz | \
-		awk -F'_' '{ print $2 }' | \
-		gzip -c > result/step2/matrix.batch.gz
 
-[ -f result/step2/bbknn/total.mtx.gz ] || \
-	mmutil_bbknn \
-		--mtx result/step1/matrix_final.mtx.gz \
-		--col result/step1/matrix_final.cols.gz \
-		--batch result/step2/matrix.batch.gz \
-		--knn 100 --rank 100 --log_scale \
-		--out result/step2/bbknn/total \
-		2> result/step2/bbknn/total.log
+We will use BBKNN adjsuted data:
+
+```{r run_bbknn}
+.hdr <- "result/step1/matrix_final"
+.data <- fileset.list(.hdr)
+.bbknn.file <- .hdr <- "result/step2/bbknn/total.RDS"
+.mkdir(dirname(.bbknn.file))
+if(!file.exists(.bbknn.file)){
+    .batches <- .fread(.data$col, col.names="tag")
+    .batches[, c("barcode","batch") := tstrsplit(tag, "_")]
+    .bbknn <- rcpp_mmutil_bbknn_pca(.data$mtx,
+                                    .batches$batch,
+                                    knn=100, RANK=100,
+                                    EM_ITER = 20,
+                                    TAKE_LN = TRUE)
+    saveRDS(.bbknn, .bbknn.file)
+}
+.bbknn <- readRDS(.bbknn.file)
 ```
 
-```{sh run_annotation}
-mkdir -p result/step2/assignment/
-
-[ -f result/step2/assignment/round1.annot.gz ] || \
-	mmutil_annotate_col \
-		--svd_u result/step2/bbknn/total.svd_U.gz \
-		--svd_d result/step2/bbknn/total.svd_D.gz \
-		--svd_v result/step2/bbknn/total.factors.gz \
- 		--row result/step1/matrix_final.rows.gz \
-		--col result/step2/bbknn/total.cols.gz \
- 		--ann marker/surface_round1_positive.txt \
- 		--anti marker/surface_round1_negative.txt \
- 		--em_iter 1000 --kappa_max 100 --em_tol 1e-8 \
- 		--out result/step2/assignment/round1 \
-		2> result/step2/assignment/round1.log
+```{r}
+.read.marker.file <- function(.file){
+    x <- .fread(.file, col.names=c("feat","ct"))
+    .xx <- x[, .(feat=list(feat)), by = .(ct)];
+    .ret <- .xx$feat; names(.ret) <- .xx$ct;
+    .ret
+}
 ```
 
+Run annotation purely based on marker genes:
 
-```{sh take_protein_data}
-if ! [ -f result/step2/protein.mtx.gz ] ; then
-    gzip -cd result/step1/matrix_final.rows.gz | \
-        awk '/anti_/ || /CCR/ || /CXCR/' | \
-        gzip > result/step2/protein.select.gz
+```{r run_annotation_round1_no_bbknn}
+.annot.file <- "result/step2/assignment/round1_raw.RDS"
+.mkdir(dirname(.annot.file))
+if(!file.exists(.annot.file)){
+    .pos.markers <- .read.marker.file("marker/surface_round1_positive.txt")
+    .neg.markers <- .read.marker.file("marker/surface_round1_negative.txt")
+    .annot.out <-
+        rcpp_mmutil_annotate_columns(
+            pos_labels = list(p1=.pos.markers),
+            r_neg_labels = list(n1=.neg.markers),
+            mtx_file = .data$mtx,
+            row_file = .data$row,
+            col_file = .data$col,
+            EM_TOL = 1e-6,
+            EM_ITER = 500)
+    saveRDS(.annot.out, .annot.file)
+}
+```
 
-    mmutil_select_row \
-        result/step1/matrix_final.mtx.gz \
-        result/step1/matrix_final.rows.gz \
-        result/step1/matrix_final.cols.gz \
-        result/step2/protein.select.gz \
-        result/step2/protein
-fi
+Run the annotation classifier on the BBKNN-corrected data:
+
+```{r run_annotation_round1}
+.annot.file <- "result/step2/assignment/round1.RDS"
+.mkdir(dirname(.annot.file))
+if(!file.exists(.annot.file)){
+    .pos.markers <- .read.marker.file("marker/surface_round1_positive.txt")
+    .neg.markers <- .read.marker.file("marker/surface_round1_negative.txt")
+    .annot.out <-
+        rcpp_mmutil_annotate_columns(
+            pos_labels = list(p1=.pos.markers),
+            r_neg_labels = list(n1=.neg.markers),
+            row_file = .data$row,
+            col_file = .data$col,
+            r_U = .bbknn$U,
+            r_D = .bbknn$D,
+            r_V = .bbknn$factors,
+            EM_TOL = 1e-6,
+            EM_ITER = 500)
+    saveRDS(.annot.out, .annot.file)
+}
+.annot.out <- readRDS(.annot.file)
+annot.dt <- setDT(.annot.out$annotation)
 ```
 
 
 ```{r read_protein_data}
-prot.raw.mtx <- Matrix::readMM("result/step2/protein.mtx.gz") %>% as.matrix()
-rownames(prot.raw.mtx) <- .fread("result/step2/protein.rows.gz") %>% unlist
-colnames(prot.raw.mtx) <- .fread("result/step2/protein.cols.gz") %>% unlist
-
-features <- .fread("result/step1/matrix_final.rows.gz") %>% unlist
+features <- .read.vec(.data$row)
 .idx <- which(str_starts(features, "anti_"))
 .rows <- features[.idx]
-U <- .fread("result/step2/bbknn/total.svd_U.gz") %>% as.matrix
-U <- U[.idx, , drop = FALSE]
-D <- .fread("result/step2/bbknn/total.svd_D.gz") %>% as.matrix
-V <- .fread("result/step2/bbknn/total.factors.gz") %>% as.matrix
+.prot.hdr <- "result/step2/prot"
+.prot.data <- fileset.list(.prot.hdr)
+if(!.files.exist(.prot.data)) {
+    .prot.data <-
+        rcpp_mmutil_copy_selected_rows(.data$mtx,
+                                       .data$row,
+                                       .data$col,
+                                       .rows,
+                                       .prot.hdr)
+}
 
+prot.raw.mtx <- read.dense(.prot.data$mtx)
+rownames(prot.raw.mtx) <- .read.vec(.prot.data$row)
+colnames(prot.raw.mtx) <- .read.vec(.prot.data$col)
+
+U <- .bbknn$U
+U <- U[.idx, , drop = FALSE]
+D <- .bbknn$D
+V <- .bbknn$factors
 prot.mtx <- sweep(U, 2, D, `*`) %*% t(V)
 rownames(prot.mtx) <- .rows
-colnames(prot.mtx) <- .fread("result/step2/bbknn/total.cols.gz") %>% unlist
+colnames(prot.mtx) <- .fread(.data$col) %>% unlist
 ```
 
 ```{r}
 .col <- c("tag", "celltype", "prob", "ln.prob")
-annot.dt <- .fread("result/step2/assignment/round1.annot.gz", col.names=.col)
+names(annot.dt) <- .col
 annot.dt[, c("barcode","batch") := tstrsplit(tag, split="_")]
 ```
+
 
 ```{r Fig_round1_cdmarker_raw, fig.width=6, fig.height=4, results="asis"}
 .ct <- c("mTreg","nTreg","mTconv","nTconv")
@@ -166,6 +209,7 @@ print(plt)
 .gg.save(filename = .file, plot = plt, width=6, height=4)
 ```
 
+
 ```{r Fig_round1_cdmarker_bbknn, fig.width=6, fig.height=4, results="asis"}
 .ct <- c("mTreg","nTreg","mTconv","nTconv")
 plt <- plt.scatter.ct.2(.ct, annot.dt, pmax(exp(prot.mtx) - 1, 0))
@@ -174,60 +218,56 @@ print(plt)
 .gg.save(filename = .file, plot = plt, width=6, height=4)
 ```
 
+
 ## UMAP to confirm cell type assignment results
 
 ```{r include=FALSE}
 plot.three.umap <- function(.umap, .assign.dt, .col.file, .palette = "Paired") {
-
-    .valid <- apply(scale(as.matrix(.umap)), 1, function(x) all(abs(x) < 3)) %>%
+    .valid <- apply(scale(as.matrix(.umap)), 1, function(x) all(abs(x) < 2)) %>%
         which
-
     .umap.dt <-
-        .fread(.col.file, col.names="cell") %>%
+        .fread(.col.file, col.names="tag") %>%
         cbind(.umap) %>%
         as.data.table
-
     .umap.dt <- .umap.dt[.valid, ]
-
-    .umap.dt[, c("barcode", "batch") := tstrsplit(cell, split="_")]
-
+    .umap.dt[, c("barcode", "batch") := tstrsplit(tag, split="_")]
+    .hash.info <- fread("data/cell_info_batch3-7.csv.gz") %>%
+        rename(tag = cbid, subject = id) %>%
+        select(-`V1`) %>%
+        mutate(disease = substr(`subject`, 1, 2))
     .umap.dt <-
         .assign.dt %>%
         filter(celltype != "CD8") %>%
         left_join(.umap.dt) %>%
         mutate(batch = as.integer(batch)) %>%
-        left_join(fread("data/hashtag.tsv.gz", header=TRUE)) %>%
-        select(-label) %>%
+        left_join(.hash.info) %>%
         mutate(batch = '#' %&% batch) %>%
         mutate(batch = as.factor(batch)) %>%
         na.omit
-
     nn <- nrow(.umap.dt)
-    p1 <- .gg.plot(.umap.dt[sample(nn), ], aes(x=V1, y=V2)) +
-        geom_point(aes(colour=celltype), size=.7, stroke=0) +
+    .umap.dt <- .umap.dt[sample(nn), ]
+    p1 <- .gg.plot(.umap.dt, aes(x=V1, y=V2)) +
+        geom_point(aes(colour=celltype), size=.7, stroke=0, alpha=.8) +
         xlab("umap 1") + ylab("umap 2") +
         scale_colour_brewer(palette=.palette)
-    p2 <- .gg.plot(.umap.dt[sample(nn), ], aes(x=V1, y=V2)) +
-        geom_point(aes(colour=batch), size=.7, stroke=0) +
+    p2 <- .gg.plot(.umap.dt, aes(x=V1, y=V2)) +
+        geom_point(aes(colour=batch), size=.7, stroke=0, alpha=.8) +
         xlab("umap 1") + ylab("umap 2") +
         scale_colour_brewer(palette="Spectral")
-    p3 <- .gg.plot(.umap.dt[sample(nn), ], aes(x=V1, y=V2)) +
-        geom_point(aes(colour=disease), size=.7, stroke=0) +
+    p3 <- .gg.plot(.umap.dt, aes(x=V1, y=V2)) +
+        geom_point(aes(colour=disease), size=.7, stroke=0, alpha=.8) +
         scale_colour_manual(values = c("gray90","#F8766D")) +
         xlab("umap 1") + ylab("umap 2")
     plt <- p1/p2/p3
     return(plt)
 }
-
-read.umap <- function(svd.file, out.file, npc = Inf, ...) {
+read.umap <- function(.xx, out.file, npc = Inf, ...) {
     dir.create(dirname(out.file), recursive=TRUE, showWarnings=FALSE)
     if(!file.exists(out.file)) {
-        .xx <- .fread(svd.file) %>% as.matrix
         npc <- min(ncol(.xx), npc)
         .xx <- .xx[, 1:npc, drop = FALSE]
-        .umap <- uwot::umap(.xx, metric="cosine",
-                            n_threads = 15,
-                            fast_sgd=TRUE,
+        .umap <- uwot::umap(.xx,
+                            n_threads = 60,
                             verbose=TRUE,
                             ...)
         .fwrite(.umap, file=out.file)
@@ -240,103 +280,113 @@ read.umap <- function(svd.file, out.file, npc = Inf, ...) {
 ```
 
 ```{r Fig_annotation_umap, fig.width=3.5, fig.height=8, results="asis"}
-svd.file <- "result/step2/bbknn/total.factors.gz"
-out.file <- "result/step2/umap/bbknn_total.gz"
-
-.umap.dt <- read.umap(svd.file, out.file, npc=10)
-
-.col.file <- "result/step1/matrix_final.cols.gz"
-
-plt <- plot.three.umap(.umap.dt, annot.dt, .col.file)
-
+.umap.file <- "result/step2/umap/bbknn_total.gz"
+.umap.dt <- read.umap(.bbknn$factors, .umap.file, npc=10, n_neighbors = 50)
+plt <- plot.three.umap(.umap.dt, annot.dt, .data$col)
 print(plt)
-
 .file <- fig.dir %&% "/Fig_annotation_umap_bbknn.pdf"
 .gg.save(filename = .file, plot = plt, width=3.5, height=8)
 ```
 
-## Q/C by marker genes
+```{r results = "asis", echo = FALSE}
+.sample.info <-
+    readxl::read_xlsx("data/Hashing list MS Treg project.xlsx", 1) %>% 
+    rename(Sample = `Cell type`) %>%
+    mutate(hash = gsub("#","",`hash`))
 
-```{sh}
-mkdir -p result/step2/marker/
+.hash.info <- fread("data/cell_info_batch3-7.csv.gz") %>%
+    rename(tag = cbid, subject = id) %>%
+    select(-`V1`) %>%
+    mutate(disease = substr(`subject`, 1, 2)) %>% 
+    mutate(hash = gsub(pattern="[a-zA-Z\\-]+", replacement="", `hash`))
 
-echo "FOXP3 ID3 BACH2 CXCR3 PRDM1 SGK1 TCF7 LEF1 SELL IL2RA IL7R IKZF2 CCR6 CCR4 CCR7 CTLA4 HLA-DRA anti_CD25 anti_CD127 anti_CD183 anti_CD196 anti_CD197 anti_CD194 anti_CD45RA anti_CD45RO anti_HLA" > result/step2/marker/marker.select
-
-if ! [ -f result/step2/marker/matrix.mtx.gz ] ; then
-	mmutil_select_row \
-		result/step1/matrix_final.mtx.gz \
-		result/step1/matrix_final.rows.gz \
-		result/step1/matrix_final.cols.gz \
-		result/step2/marker/marker.select \
-		result/step2/marker/matrix
-fi
+.umap.share <-
+    annot.dt %>%
+    mutate(batch=as.integer(batch)) %>%
+    cbind(.umap.dt) %>%
+    rename(umap1 = V1, umap2 = V2) %>%
+    left_join(.hash.info)
+.fwrite.safe <- function(.dt, .file, ...) {
+    if(!file.exists(.file)) fwrite(.dt, .file, ...)
+}
+.file <- "Tab/step2_umap_share.txt.gz"
+.fwrite.safe(.umap.share, .file)
+cat("[UMAP coordinates]("%&% .file %&% ")\n\n")
 ```
 
+## Q/C by other marker genes/proteins
+
+```{r}
+.markers <-
+    c("FOXP3", "ID3", "BACH2", "CXCR3", "PRDM1", "SGK1", "TCF7", "LEF1",
+      "SELL", "IL2RA", "IL7R", "IKZF2", "CCR6", "CCR4", "CCR7", "CTLA4",
+      "HLA-DRA", "anti_CD25", "anti_CD127", "anti_CD183", "anti_CD196",
+      "anti_CD197", "anti_CD194", "anti_CD45RA", "anti_CD45RO",
+      "anti_HLA") %>%
+    unique
+.marker.hdr <- "result/step2/marker/marker"
+.mkdir(dirname(.marker.hdr))
+.marker.data <- fileset.list(.marker.hdr)
+if(!.files.exist(.marker.data)){
+    .marker.data <-
+        rcpp_mmutil_copy_selected_rows(.data$mtx,
+                                       .data$row,
+                                       .data$col,
+                                       .markers,
+                                       .marker.hdr)
+}
+```
 
 ```{r include = FALSE}
-.markers <-
-    .fread("result/step2/marker/matrix.rows.gz") %>%
-    unlist
-
 .tags <-
-    .fread("result/step2/marker/matrix.cols.gz") %>%
+    .fread("result/step2/marker/marker.cols.gz") %>%
     unlist
-
 .ct <- c("mTreg","nTreg","mTconv","nTconv")
-
+.markers <- .read.vec(.marker.data$row)
 marker.dt <-
-    Matrix::readMM("result/step2/marker/matrix.mtx.gz") %>%
-    as.matrix() %>%
-    t() %>%
-    as.data.table() %>%
+    Matrix::readMM("result/step2/marker/marker.mtx.gz") %>%
+    as.matrix() %>% t() %>%
     (function(x) { colnames(x) <- .markers; x }) %>%
+    as.data.table() %>%
     mutate(tag = .tags) %>%
-    (function(x) { 
-        .fread("result/step2/bbknn/total.cols.gz",
-               col.names = "tag") %>%
+    (function(x) {
+        .fread(.data$col, col.names = "tag") %>%
             cbind(.umap.dt) %>%
-            rename(UMAP1 = V1, UMAP2 = V2) %>% 
+            rename(UMAP1 = V1, UMAP2 = V2) %>%
             left_join(x)
     }) %>%
-    filter(abs(scale(UMAP1)) < 3) %>% 
-    filter(abs(scale(UMAP2)) < 3) %>% 
+    filter(abs(scale(UMAP1)) < 2) %>%
+    filter(abs(scale(UMAP2)) < 2) %>%
     as.data.table %>%
     melt(id.vars = c("tag", "UMAP1", "UMAP2"),
          variable.name = "marker",
          value.name = "expr") %>%
-    left_join(annot.dt) %>% 
+    left_join(annot.dt) %>%
     mutate(expr = if_else(is.na(expr), 0, expr)) %>%
     na.omit %>%
-    mutate(celltype = factor(celltype, .ct)) %>% 
+    mutate(celltype = factor(celltype, .ct)) %>%
     as.data.table
-
 plot.marker.umap <- function(.marker) {
-
     .dt <- marker.dt[marker == .marker]
-
     ## handle outliers for better visualization
     .cutoff <- quantile(.dt$expr, probs = .95, na.rm=TRUE)
-    .cutoff <- max(.cutoff, 3)
-
+    .cutoff <- max(.cutoff, 2.5)
     .aes <- aes(x = UMAP1,
                 y = UMAP2,
                 colour = expr)
-
     .dt <- .dt %>%
-        arrange(expr) %>%
-        mutate(expr = pmin(expr, .cutoff))
-
-    ret <- 
+        mutate(expr = pmin(expr, .cutoff)) %>%
+        arrange(expr)
+    ret <-
         ggplot(.dt, .aes) +
-        ggtitle(.marker) + 
+        ggtitle(.marker) +
         xlab("UMAP 1") + ylab("UMAP 2") +
         theme_minimal() +
-        geom_point(stroke=0, size=.7) +
+        geom_point(stroke=.0, size=.7, alpha=.8) +
         theme(legend.key.width = unit(.2, "lines"),
               legend.key.height = unit(.5, "lines"),
               legend.title = element_text(size=6),
               legend.text = element_text(size=5))
-
     if(str_starts(.marker, "anti_")) {
         ret <- ret + scale_colour_distiller("", direction=1)
     } else {
@@ -346,13 +396,15 @@ plot.marker.umap <- function(.marker) {
 }
 ```
 
-```{r fig.width=3.2, fig.height=3, results="asis"}
+**Note: these plots show expression values without batch adjustment**
+
+```{r fig.width=3.2, fig.height=2.8, results="asis"}
 .markers <- sort(as.character(unique(marker.dt$marker)))
 for(g in .markers){
     plt <- plot.marker.umap(g)
     print(plt)
     .file <- fig.dir %&% "/Fig_marker_" %&% g %&% "_umap.pdf"
-    .gg.save(filename = .file, plot = plt, width=3.2, height=3)    
+    .gg.save(filename = .file, plot = plt, width=3.2, height=2.8)
 }
 ```
 
@@ -371,7 +423,6 @@ for(g in .markers){
         ungroup() %>%
         mutate(batch = "#" %&% batch %&% " (N=" %&% num.int(nb) %&% ")")
 }
-
 .sum.stat.tot <- function(.dt) {
     .dt %>%
         group_by(disease) %>%
@@ -380,7 +431,6 @@ for(g in .markers){
         mutate(Pc = cumsum(P)) %>%
         ungroup()
 }
-
 .plt.sum.stat <- function(.stat) {
     .gg.plot(.stat, aes(x=disease, y=P, group=ct, fill=celltype)) +
         facet_grid(.~batch) +
@@ -393,19 +443,12 @@ for(g in .markers){
 ```
 
 ```{r}
-.hash.info <-
-    readxl::read_xlsx("data/Hashing list MS Treg project.xlsx", 1) %>%
-    mutate(hash = str_remove(hash,"#")) %>%
-    mutate(hash = as.integer(hash)) %>%
-    rename(Sample = `Cell type`)
-
 .dt <-
     annot.dt %>%
     mutate(batch=as.integer(batch)) %>%
-    left_join(fread("data/hashtag.tsv.gz",header=T)) %>%
     left_join(.hash.info) %>%
-    mutate(ct=factor(celltype, c("nTconv","mTconv","nTreg","mTreg"))) %>%
-    filter(batch != 2, !is.na(ct), !is.na(Sample))
+    mutate(ct=factor(celltype, c("nTconv","mTconv","nTreg","mTreg"))) %>% 
+    left_join(.sample.info)
 ```
 
 ## Combining all the experiments
@@ -416,12 +459,9 @@ for(g in .markers){
         .(N = .N),
         by=.(batch, celltype, ct, disease)] %>%
     .sum.stat.batch
-
 plt <- .plt.sum.stat(.stat) +
     ggtitle("Profiled on all the samples")
-
 print(plt)
-
 .file <- fig.dir %&% "/Fig_count_stat_tot.pdf"
 .gg.save(filename = .file, plot = plt, height=3, width=6)
 ```
@@ -433,12 +473,9 @@ print(plt)
         by=.(celltype, ct, disease)] %>%
     .sum.stat.tot %>%
     mutate(batch = "(N=" %&% num.int(sum(.stat$N)) %&% ")")
-
 plt <- .plt.sum.stat(.stat) +
     ggtitle("Profiled on all the samples")
-
 print(plt)
-
 .file <- fig.dir %&% "/Fig_count_merged_stat_tot.pdf"
 .gg.save(filename = .file, plot = plt, height=3, width=2)
 ```
@@ -451,12 +488,9 @@ print(plt)
         .(N = .N),
         by=.(batch, celltype, ct, disease)] %>%
     .sum.stat.batch
-
 plt <- .plt.sum.stat(.stat) +
     ggtitle("Profiled on Total CD4 T-cells")
-
 print(plt)
-
 .file <- fig.dir %&% "/Fig_count_stat_cd4.pdf"
 .gg.save(filename = .file, plot = plt, height=3, width=6)
 ```
@@ -467,12 +501,9 @@ print(plt)
     .dt[Sample == "Total CD4T cells", .(N = .N), by=.(celltype, ct, disease)] %>%
     .sum.stat.tot %>%
     mutate(batch = "(N=" %&% num.int(sum(.stat$N)) %&% ")")
-
 plt <- .plt.sum.stat(.stat) +
     ggtitle("Profiled on Total CD4 T-cells")
-
 print(plt)
-
 .file <- fig.dir %&% "/Fig_count_merged_stat_cd4.pdf"
 .gg.save(filename = .file, plot = plt, height=3, width=2)
 ```
@@ -485,11 +516,9 @@ print(plt)
         .(N = .N),
         by=.(batch, celltype, ct, disease)] %>%
     .sum.stat.batch
-
 plt <- .plt.sum.stat(.stat) +
     ggtitle("Profiled on the CD25+ enriched")
 print(plt)
-
 .file <- fig.dir %&% "/Fig_count_stat_cd25enriched.pdf"
 .gg.save(filename = .file, plot = plt, height=3, width=6)
 ```
@@ -499,12 +528,9 @@ print(plt)
     .dt[Sample == "CD25+ CD4T cells", .(N = .N), by=.(celltype, ct, disease)] %>%
     .sum.stat.tot %>%
     mutate(batch = "(N=" %&% num.int(sum(.stat$N)) %&% ")")
-
 plt <- .plt.sum.stat(.stat) +
     ggtitle("Profiled on the CD25+ enriched")
-
 print(plt)
-
 .file <- fig.dir %&% "/Fig_count_merged_stat_cd25enriched.pdf"
 .gg.save(filename = .file, plot = plt, height=3, width=2)
 ```
