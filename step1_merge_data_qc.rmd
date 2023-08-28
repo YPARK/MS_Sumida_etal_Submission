@@ -1,5 +1,5 @@
 ---
-title: "Merge data sets and perform simple Q/C"
+title: "Step 1: merge CITE-seq data followed and exploratory data analysis"
 author: Yongjin Park
 theme: jekyll-theme-minimal
 date: "`r Sys.Date()`"
@@ -23,24 +23,6 @@ library(mmutilR)
 source("Util-rmd.R")
 ```
 
-```{r helper_functions}
-.fread <- function(...) fread(..., header=FALSE)
-.fwrite <- function(...) fwrite(..., quote=FALSE, sep="\t", row.names = FALSE, col.names = FALSE)
-.read.mat <- function(...) .fread(...) %>% as.matrix
-.read.vec <- function(...) .fread(...) %>% unlist(use.names=FALSE)
-.files.exist <- function(...){
-    lapply(..., file.exists) %>%
-        unlist() %>%
-        all()
-}
-```
-
-# Outline
-
-1. Merge five batches into one file set
-
-2. Remove cells with too few counts and a high mitochondrial fraction
-
 # 1. Merge all the available batches into one file set
 
 ## Combine both protein and RNA features
@@ -49,8 +31,9 @@ source("Util-rmd.R")
 .mkdir("result/step1")
 .out.hdr <- "result/step1/matrix"
 .data <- fileset.list(.out.hdr)
-if(!.files.exist(.data)){
-    bats <- hdrs <- str_c("data/batch_", 3:7)
+
+if.needed(.data, {
+    bats <- hdrs <- ("data/batch_" %&% 3:7)
     .data <-
         rcpp_mmutil_merge_file_sets(r_headers=hdrs,
                                     r_batches=3:7,
@@ -58,9 +41,10 @@ if(!.files.exist(.data)){
                                     r_row=str_c(hdrs, ".feature.tsv.gz"),
                                     r_col=str_c(hdrs, ".barcode.tsv.gz"),
                                     output=.out.hdr)
-}
+    if.needed(.data$mtx %&% ".index", rcpp_mmutil_build_index(.data$mtx))
+    .mkdir(.out.hdr)
+})
 ```
-
 
 ```{r}
 .info <- rcpp_mmutil_info(.data$mtx)
@@ -72,38 +56,43 @@ if(!.files.exist(.data)){
 
 * Total  `r num.int(.info$max.elem)` non-zero elements
 
+
 ## Take RNA-seq data with basic Q/C steps
 
 ```{r take_rna_data}
 .genes <-
-    .fread(.data$row, col.names="feat") %>%
+    fread(.data$row, col.names="feat", header=F) %>%
     filter(!str_starts(feat, "anti_")) %>% 
     filter(!str_starts(feat, "MT-")) %>%
     unlist()
 .mt.genes <- 
-    .fread(.data$row, col.names="feat") %>%
+    fread(.data$row, col.names="feat", header=F) %>%
     filter(str_starts(feat, "MT-")) %>%
     unlist()
 .rna.hdr <- "result/step1/rna"
 .mt.hdr <- "result/step1/mt"
 .rna.data <- fileset.list(.rna.hdr)
 .mt.data <- fileset.list(.mt.hdr)
-if(!.files.exist(.rna.data)){
+
+if.needed(.rna.data, {
+    .mkdir(.rna.hdr)
     .rna.data <-
         rcpp_mmutil_copy_selected_rows(.data$mtx,
                                        .data$row,
                                        .data$col,
                                        .genes,
                                        .rna.hdr)
-}
-if(!.files.exist(.mt.data)){
+})
+
+if.needed(.mt.data, {
+    .mkdir(.mt.hdr)
     .mt.data <-
         rcpp_mmutil_copy_selected_rows(.data$mtx,
                                        .data$row,
                                        .data$col,
                                        .mt.genes,
                                        .mt.hdr)
-}
+})
 ```
 
 
@@ -117,10 +106,10 @@ if(!.files.exist(.mt.data)){
 ```
 
 ```{r run_bbknn}
-.factors.file <- "result/step1/bbknn/rna.factors.gz"
-.mkdir(dirname(.factors.file))
-if(!file.exists(.factors.file)){
-    .batches <- .fread(.rna.data$col, col.names="cell") %>%
+.file <- "result/step1/bbknn/rna.rds"
+.mkdir(dirname(.file))
+if.needed(.file, {
+    .batches <- fread(.rna.data$col, col.names="cell", header=F) %>%
         (function(x) {
             x[, c("barcode", "batch") := tstrsplit(cell, split="[_]")];
             x$batch
@@ -129,50 +118,62 @@ if(!file.exists(.factors.file)){
                                     .batches,
                                     knn=100, RANK=3,
                                     TAKE_LN = TRUE)
-    .fwrite(as.data.table(.bbknn$factors), file = .factors.file)
-}
-.factors <- .read.mat(.factors.file) %>% scale
+    saveRDS(.bbknn, .file)
+})
+
+.bbknn <- readRDS(.file)
+.factors <- .bbknn$factors.adjusted
 ```
 
 # 2. Cell Q/C by the number of non-zero elements and mictochondrial activities
 
-
 ```{r cell_score_cutoff}
 .file <- "result/step1/qc_table.txt.gz"
-if(!file.exists(.file)) {
+
+if.needed(.file, {
+
     .qc.dt <-
         merge(.dt.rna, .dt.mt, by="name", suffix=c(".nonmt", ".mt")) %>% 
         mutate(mito.frac = 100 * sum.mt / (sum.nonmt + sum.mt)) %>%
         as.data.table
+
     .temp <- .factors %>%
         as.data.table %>%
         (function(x) { colnames(x) <- "PC" %&% 1:ncol(x); x })
-    .qc.dt <- cbind(.qc.dt, .temp) %>% as.data.table %>% na.omit
-    set.seed(1)
-    .x <- .qc.dt$mito.frac
-    .kmeans <- kmeans(.x, centers=2, nstart=100)
-    k.valid <- which.max(.kmeans$size)
-    mito.cutoff <- max(.x[.kmeans$cluster == k.valid])
-    .y <- .qc.dt$nnz.nonmt
-    .kmeans <- kmeans(log10(.y), centers=2, nstart=100)
-    k.valid <- which.max(.kmeans$size)
-    nnz.cutoff <- max(.y[.kmeans$cluster != k.valid])
-    .dat <- .qc.dt[, .(PC1, PC2, PC3)] %>% as.matrix
-    pc.valid <- apply(scale(.dat), 1, function(x) all(abs(x) < 3)) %>%
-        which
-    .qc.dt <- .qc.dt %>%
-        mutate(j = 1:n()) %>%
-        mutate(qc = if_else(nnz.nonmt > nnz.cutoff &
-                            mito.frac < mito.cutoff &
-                            j %in% pc.valid,
-                            "pass",
-                            "fail")) %>%
-        dplyr::select(-j) %>%
-        as.data.table
-    fwrite(.qc.dt, .file, col.names = TRUE, row.names = FALSE)
-} else {
-    .qc.dt <- fread(.file, header = TRUE)
-}
+
+        .qc.dt <- cbind(.qc.dt, .temp) %>% as.data.table %>% na.omit
+        set.seed(1)
+        .x <- .qc.dt$mito.frac
+        .kmeans <- kmeans(.x, centers=2, nstart=100)
+        k.valid <- which.max(.kmeans$size)
+        mito.cutoff <- max(.x[.kmeans$cluster == k.valid])
+        .y <- .qc.dt$nnz.nonmt
+        .kmeans <- kmeans(log10(.y), centers=2, nstart=100)
+        k.valid <- which.max(.kmeans$size)
+        nnz.cutoff <- max(.y[.kmeans$cluster != k.valid])
+
+        .dat <- .qc.dt[, .(PC1, PC2, PC3)] %>%
+            as.matrix %>%
+            apply(MARGIN = 2, scale)
+
+        .kmeans <- kmeans(.dat, centers=2, nstart=100)
+        k.valid <- which(apply(.kmeans$centers, 1, function(x) all(abs(x) < 2)))
+        pc.valid <- which(.kmeans$cluster %in% k.valid)
+
+        .qc.dt <- .qc.dt %>%
+            mutate(j = 1:n()) %>%
+            mutate(qc = if_else(nnz.nonmt > nnz.cutoff &
+                                mito.frac < mito.cutoff &
+                                j %in% pc.valid,
+                                "pass",
+                                "fail")) %>%
+            dplyr::select(-j) %>%
+            as.data.table
+
+        fwrite(.qc.dt, .file, col.names = TRUE, row.names = FALSE)
+})
+
+.qc.dt <- fread(.file, header = TRUE)
 ```
 
 ```{r qc_colours}
@@ -226,14 +227,14 @@ print(plt)
 .qc.hdr <- "result/step1/matrix_qc"
 .qc.data <- fileset.list(.qc.hdr)
 .qc.cells <- .qc.dt[qc == "pass", .(name)] %>% unlist
-if(!.files.exist(.qc.data)){
+if.needed(.qc.data,{
     .qc.data <-
         rcpp_mmutil_copy_selected_columns(.data$mtx,
                                           .data$row,
                                           .data$col,
                                           .qc.cells,
                                           .qc.hdr)
-}
+})
 ```
 
 ```{r}
@@ -255,14 +256,14 @@ if(!.files.exist(.qc.data)){
 .valid.features <- .feature.scores[nnz > 100, .(name)] %>% unlist
 .final.hdr <- "result/step1/matrix_final"
 .final.data <- fileset.list(.final.hdr)
-if(!.files.exist(.final.data)){
+if.needed(.final.data, {
     .final.data <-
         rcpp_mmutil_copy_selected_rows(.qc.data$mtx,
                                        .qc.data$row,
                                        .qc.data$col,
                                        .valid.features,
                                        .final.hdr)
-}
+})
 ```
 
 ```{r}

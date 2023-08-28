@@ -1,0 +1,618 @@
+---
+title: "Differential Expression analysis at the top-level cell types"
+author: Yongjin Park
+theme: jekyll-theme-minimal
+date: "`r Sys.Date()`"
+bibliography: "reference.bib"
+---
+
+```{r GlobOpt, include=FALSE}
+fig.dir = 'Fig/STEP4/'
+knitr::opts_knit$set(eval.after = 'fig.cap')
+knitr::opts_chunk$set(warning = FALSE, message = FALSE, fig.path = fig.dir)
+knitr::opts_chunk$set(fig.width=8, fig.height=8)
+options(stringsAsFactors = FALSE)
+FIG.CAP = '**Fig.**'
+
+library(tidyverse)
+library(data.table)
+library(patchwork)
+source("Util-rmd.R")
+.mkdir(fig.dir)
+```
+
+```{r helper_functions}
+.fwrite <- function(...) fwrite(..., quote=FALSE, sep="\t", row.names = FALSE, col.names = FALSE)
+
+.fwrite.safe <- function(.dt, .file, ...) {
+    if(!file.exists(.file)) fwrite(.dt, .file, ...)
+}
+
+.files.exist <- function(...){
+    lapply(..., file.exists) %>%
+        unlist() %>%
+        all()
+}
+
+summarize.deg <- function(.dt, tot.cutoff = 1, disease.name = "MS", control.name = "HA") {
+
+    ## adjust potential bias
+    .dt[`tot` >= tot.cutoff, b := mean(cfa), by = .(gene, celltype)]
+    .dt[, cfa := cfa - b]
+
+    .sd <- .dt[`tot` >= tot.cutoff,
+               .(min.sd = sd(cfa) / sqrt(.N)),
+               by = .(gene, celltype)]
+
+    .dt <- .dt %>%
+        filter(`tot` >= tot.cutoff) %>%
+        left_join(.sd) %>%
+        mutate(w = 1/(cfa.sd^2 + min.sd^2)) %>%
+        as.data.table
+
+    ## average disease effect on the disease subjects
+    ADD.dt <-
+        .dt[disease == disease.name & `tot` >= tot.cutoff,
+               .(ADD = sum(cfa * w) / sum(w),
+                 ADD.se = sqrt(1/sum(w))),
+               by = .(gene, celltype)]
+
+    ## average disease effect on the control subjects
+    ADC.dt <-
+        .dt[disease == control.name & `tot` >= tot.cutoff,
+               .(ADC = -sum(cfa * w)/ sum(w),
+                 ADC.se = sqrt(1/sum(w))),
+               by = .(gene, celltype)]
+
+    ## average disease effect
+    ADE.dt <-
+        .dt[`tot` >= tot.cutoff] %>%
+        mutate(cfa.s = if_else(disease == disease.name, 1, -1) * cfa) %>%
+        mutate(tot.s = if_else(disease == disease.name, 1, -1) * tot) %>%
+        as.data.table %>%
+        (function(xx) {
+            xx[,
+               .(ADE = sum(cfa.s * w) / sum(w),
+                 ADE.se = sqrt(1/sum(w))),
+               by = .(gene, celltype)
+               ]
+        }) %>%
+        mutate(z = ADE/ADE.se) %>%
+        mutate(pv = 2 * pnorm(abs(z), lower.tail=FALSE)) %>%
+        mutate(fwer = p.adjust(pv, "holm")) %>%
+        as.data.table
+
+    left_join(ADE.dt, ADD.dt) %>% left_join(ADC.dt) %>% as.data.table
+}
+
+plot.bulk.sc <- function(.sc, .bulk, fwer.cutoff = .5, qv.cutoff = .5) {
+
+    .dt <- left_join(.bulk, .sc) %>%
+        mutate(sc.z = pmin(pmax(z, -10), 10)) %>%
+        na.omit %>%
+        arrange(abs(sc.z)) %>%
+        as.data.table
+
+    .dt.show <-
+        .dt[(fwer < fwer.cutoff) & bulk.qv < qv.cutoff] %>%
+        group_by(sign(sc.z)) %>%
+        top_n(10, -log10(pv)) %>%
+        ungroup() %>%
+        as.data.table
+
+    rr <- cor(.dt$z, .dt$bulk.t, method="spearman")
+    r.pv <- cor.test(.dt$z, .dt$bulk.t, method="spearman")$p.value
+
+    .dt.pos <- .dt.show[z > 0]
+    .dt.neg <- .dt.show[z < 0]
+
+    .scale.size <-
+        scale_size_continuous(range=c(1,2.5), labels = function(x) num.sci(10^(-x)), guide = FALSE)
+
+    plt <-
+        ggplot(.dt, aes(x = bulk.t, y = sc.z, size = -log10(pmax(pv, bulk.pv)))) +
+        theme_minimal() +
+        .scale.size +
+        xlab("bulk RNA-seq DEG effect") + ylab("scRNA-seq DEG effect") +
+        scale_x_continuous(limits = c(-7, 7)) +
+        geom_point(stroke=.2, pch=21, colour="gray40") +
+        geom_vline(xintercept = 0, size = .1) +
+        geom_hline(yintercept = 0, size = .1) +
+        geom_smooth(method="lm", se=FALSE, colour="red", lty=1, size=.5)
+
+    .aes <- aes(label=gene %&% "\n(" %&% num.sci(bulk.pv) %&% ")")
+
+    if(nrow(.dt.pos) > 0) {
+        plt <- plt +
+            geom_point(data=.dt.pos, pch=21, fill="#ef8a62") +
+            ggrepel::geom_label_repel(data=.dt.pos, .aes,
+                                     size = 3, vjust=1, hjust=1,
+                                     segment.size = .1,
+                                     segment.color = "#ef8a62",
+                                     box.padding = .1,
+                                     label.padding = .1,
+                                     nudge_x = -1, nudge_y = -1,
+                                     max.overlaps = 10)
+    }
+
+    if(nrow(.dt.neg) > 0) {
+        plt <- plt +
+            geom_point(data=.dt.neg, pch=21, fill="#67a9cf") +
+            ggrepel::geom_label_repel(data=.dt.neg, .aes,
+                                     size = 3, vjust=0, hjust=0,
+                                     segment.size = .1,
+                                     segment.color = "#67a9cf",
+                                     box.padding = .1,
+                                     label.padding = .1,
+                                     nudge_x = 1, nudge_y = 1,
+                                     max.overlaps = 0)
+    }
+
+    plt <- plt +
+        ggtitle("Cor=" %&%
+                num.round(rr) %&%
+                ", p=" %&% num.sci(r.pv) %&%
+                ", N=" %&% num.int(nrow(.dt)))
+
+    list(plt=plt, cor = rr, cor.pv = r.pv)
+}
+
+show.each.gene <- function(g, .data, .stat, .cutoff = 1e-4) {
+
+    .dt.g <- .data[gene == g]
+    .stat.dt <- .stat[gene == g]
+
+    .dir <- .stat.dt[which.max(abs(.stat.dt$ADE)), .(ADE)] %>%
+        unlist
+
+    if(.dir > 0) {
+
+        .dt <- .dt.g %>%
+            filter(mu > log(.cutoff)) %>%
+            left_join(.stat.dt) %>%
+            group_by(disease, celltype) %>%
+            arrange(cfa) %>%
+            mutate(j = 1:n()) %>%
+            ungroup() %>%
+            mutate(x = disease %&% "_" %&% j)
+
+    } else {
+
+        .dt <- .dt.g %>%
+            filter(mu > log(.cutoff)) %>%
+            left_join(.stat.dt) %>%
+            group_by(disease, celltype) %>%
+            arrange(desc(cfa)) %>%
+            mutate(j = 1:n()) %>%
+            ungroup() %>%
+            mutate(x = disease %&% "_" %&% j)
+
+    }
+
+    .dt <- .dt %>%
+        mutate(.pv = if_else(is.na(pv), "1", num.sci(pv))) %>%
+        mutate(.facet = celltype %&% "\n(" %&% .pv %&% ")") %>%
+        mutate(ADD.z = ADD/ADD.se, ADC.z = ADC/ADC.se) %>%
+        as.data.table
+
+    .stat.dt <- .dt[, .(celltype,
+                        ADE, ADE.se,
+                        ADD, ADD.se,
+                        ADC, ADC.se,
+                        pv, .facet)] %>%
+        unique
+
+    .aes <- aes(x = x,
+                y = cfa,
+                ymin = cfa - 2 * cfa.sd,
+                ymax = cfa + 2 * cfa.sd,
+                fill = disease)
+
+    .scale.y <- scale_y_continuous(labels = function(x) num.round(exp(x)))
+
+    p1 <-
+        .gg.plot(.dt, .aes) +
+        theme(legend.position = "top") +
+        facet_wrap(~.facet, nrow = 1, scales="free") +
+        .scale.y +
+        theme(axis.ticks.x = element_blank()) +
+        theme(axis.text.x = element_blank()) +
+        theme(axis.title.x = element_blank()) +
+        geom_hline(yintercept = 0, size = 1, colour = "gray") +
+        geom_hline(data = .stat.dt, aes(yintercept = ADE), size = 1, colour = "#F8766D") +
+        geom_linerange(size = .2) +
+        geom_point(aes(size = exp(mu)), pch = 21, stroke = .2) +
+        scale_size_continuous("mean", range=c(0, 2.5)) +
+        scale_fill_manual(values = c("gray90","#F8766D")) +
+        xlab("") + ylab("disase effect") + ggtitle(g)
+
+    .temp.1 <- .stat.dt %>%
+        dplyr::select(celltype, pv, ADE, ADD, ADC) %>%
+        mutate(ADC = - ADC) %>%                  # flip the effect
+        melt(id.vars=c("celltype", "pv"), value.name = "mu")
+
+    .temp.2 <- .stat.dt %>%
+        dplyr::select(celltype, ADE.se, ADD.se, ADC.se) %>%
+        melt(id.vars="celltype", value.name = "se") %>%
+        mutate(variable = str_remove(variable, ".se"))
+
+    .temp <- left_join(.temp.1, .temp.2)
+
+    p2 <- .gg.plot(.temp, aes(x = variable, y = mu, ymin = mu - 3 * se, ymax = mu + 3 * se)) +
+        theme(axis.text.x = element_text(angle=90, hjust = 1, vjust= .5)) +
+        facet_wrap(~celltype, nrow = 1, scales="free") +
+        .scale.y + ylab("disease effect") + xlab("") +
+        geom_hline(yintercept = 0, lty = 2, size = .5, colour = "black") +
+        geom_linerange(size = .2) +
+        geom_point(aes(fill = variable, stroke = .2, size = -log10(pv)), pch = 21) +
+        scale_fill_brewer(palette = "Greens", guide=FALSE) +
+        scale_size_continuous("p-value", range=c(.5, 2.5), breaks=seq(0, 10, 2), labels = function(x) 10^(-x))
+
+    plt <- (p1 / p2) + patchwork::plot_layout(heights = c(4,2))
+    return(plt)
+}
+
+count.deg <- function(.dt, fwer.cutoff = .05) {
+    .dt[fwer < fwer.cutoff, .(n = .N),
+        by = .(celltype,
+               direction = if_else(z > 0, "up", "down"))
+        ] %>%
+        mutate(direction = factor(direction, c("up", "down"))) %>%
+        group_by(celltype) %>%
+        arrange(desc(direction)) %>%
+        mutate(nc = cumsum(n)) %>%
+        ungroup
+}
+```
+
+# Result
+
+```{r read_annot}
+.annot.file <- "result/step2/assignment/round1.RDS"
+.annot.out <- readRDS(.annot.file)
+.col <- c("tag", "celltype", "prob", "ln.prob")
+annot.dt <- setDT(.annot.out$annotation)
+names(annot.dt) <- .col
+annot.dt[, c("barcode","batch") := tstrsplit(tag, split="_")]
+annot.dt[, j := 1:.N]
+annot.dt[, batch := as.integer(`batch`)]
+
+hash.info <- fread("data/cell_info_batch3-7.csv.gz") %>%
+    rename(tag = cbid, subject = id) %>%
+    mutate(disease = substr(`subject`, 1, 2))
+```
+
+```{r prepare_input_data}
+library(mmutilR)
+## This may contain unannotated cells, but will be filtered out
+.mtx.data <- fileset.list("result/step1/rna")
+
+sort.col <- function(.mat, .cts, .indvs){
+
+    .fun <- function(ct) paste0(.indvs, "_", ct)
+
+    .samples <-
+        lapply(.cts, .fun) %>%
+        do.call(what=c) %>%
+        sort()
+
+    .idx <- match(.samples, colnames(.mat))
+    .idx <- .idx[!is.na(.idx)]
+    .mat[, .idx, drop = FALSE]
+}
+
+combine.statistics <- function(.result){
+
+    ret <- lapply(names(.result), function(v) {
+        .mat <- .result[[v]]
+        if(!is.matrix(.mat)) return(NULL)
+        as.data.table(reshape2::melt(.mat, value.name = v))
+    })
+
+    out <- ret[[1]]
+    for(j in 2:length(ret)){
+        if(is.null(out)) {
+            out <- ret[[j]]
+        } else if(!is.null(ret[[j]])) {
+            out <- merge(out, ret[[j]])
+        }
+    }
+    return(out)
+}
+```
+
+## HC vs. MS Differential Gene Expression
+
+```{r estimate_ms_vs_hc_data}
+.mkdir("result/step4/deg/")
+.deg.data <- fileset.list("result/step4/deg/hc_ms")
+
+if(!.files.exist(.deg.data)){
+    .deg.data <-
+        rcpp_mmutil_copy_selected_columns(.mtx.data$mtx,
+                                          .mtx.data$row,
+                                          .mtx.data$col,
+                                          unique(.celltype[,1]),
+                                          "result/step4/deg/hc_ms")
+}
+
+.celltype <-
+    annot.dt[, .(tag, celltype)] %>%
+    as.data.frame()
+.cell2indv <- annot.dt %>%
+    left_join(hash.info) %>%
+    select(tag, subject) %>%
+    unique() %>%
+    as.data.frame()
+
+.deg.stat.file <- "result/step4/deg/hc_ms.RDS"
+if(!.files.exist(.deg.stat.file)){
+    .indv2exp <- .cell2indv %>%
+        select(subject) %>%
+        mutate(disease = substr(`subject`, 1, 2)) %>%
+        as.data.frame()
+    .deg.stat <- make.cocoa(.deg.data, .celltype, .cell2indv, .indv2exp,
+                            knn=100, .rank=10, .take.ln = TRUE,
+                            num.threads=24)
+    saveRDS(.deg.stat, .deg.stat.file)
+}
+
+.deg.stat <- readRDS(.deg.stat.file)
+
+.cts <- unique(unlist(.celltype[,2]))
+.indvs <- sort(unique(.cell2indv[,2]))
+
+.hc.ms.dt <-
+    list(tot = sort.col(.deg.stat$sum, .cts, .indvs),
+         cfa = sort.col(.deg.stat$resid.ln.mu, .cts, .indvs),
+         cfa.sd = sort.col(.deg.stat$resid.ln.mu.sd, .cts, .indvs)) %>%
+    combine.statistics()
+
+.hc.ms.dt[, c("subject","celltype") := tstrsplit(`Var2`,split="_")]
+.hc.ms.dt[, disease := substr(`subject`,1,2)]
+.hc.ms.dt[, gene := `Var1`]
+.hc.ms.dt[, `Var1` := NULL]
+.hc.ms.dt[, `Var2` := NULL]
+hc.ms.deg <- summarize.deg(.hc.ms.dt)
+```
+
+### Comparison with the bulk DEG results
+
+
+```{r read_bulk_deg_results}
+read.bulk <- function(.file) {
+    fread(.file) %>%
+        rename(gene = gene_name) %>%
+        rename(bulk.t = t, bulk.pv = P.Value, bulk.qv = adj.P.Val) %>%
+        dplyr::select(gene, starts_with("bulk"))
+}
+
+.file <- "data/DEG/20180513/deg.ms.hc.treg.mem.exvivo.sex_covar.ruv.txt"
+bulk.mTreg.dt <- read.bulk(.file)
+
+.file <- "data/DEG/20180513/deg.ms.hc.teff.mem.exvivo.sex_covar.ruv.txt"
+bulk.mTconv.dt <- read.bulk(.file)
+```
+
+#### Memory Treg genes
+
+```{r}
+.out <- plot.bulk.sc(hc.ms.deg[celltype == "mTreg"],
+                     bulk.mTreg.dt,
+                     fwer.cutoff = 1e-2,
+                     qv.cutoff = .2)
+```
+
+#### Correlation `r num.round(.out$cor)` with p-value = `r num.sci(.out$cor.pv)`
+
+```{r Fig_DEG_comparison_mTreg, fig.width=3, fig.height=5, echo = FALSE, results="asis"}
+.file <- fig.dir %&% "/Fig_DEG_comparison_mTreg.pdf"
+print(.out$plt)
+.gg.save(filename = .file, plot = .out$plt, width=3, height=5)
+```
+
+#### Memory Tconv genes
+
+```{r}
+.out <- plot.bulk.sc(hc.ms.deg[celltype == "mTconv"],
+                     bulk.mTconv.dt,
+                     fwer.cutoff = 1e-2,
+                     qv.cutoff = .2)
+```
+
+#### Correlation `r num.round(.out$cor)` with p-value = `r num.sci(.out$cor.pv)`
+
+```{r Fig_DEG_comparison_mTconv, fig.width=3, fig.height=5, echo = FALSE, results="asis"}
+.file <- fig.dir %&% "/Fig_DEG_comparison_mTconv.pdf"
+print(.out$plt)
+.gg.save(filename = .file, plot = .out$plt, width=3, height=5)
+```
+
+### Found `r num.int(nrow(unique(hc.ms.deg[fwer < .05, .(gene)])))` unique genes strongly perturbed by MS with FWER 5%
+
+
+* Up-regulated: `r num.int(nrow(unique(hc.ms.deg[fwer < .05 & z > 0, .(gene)])))`
+
+* Down-regulated:  `r num.int(nrow(unique(hc.ms.deg[fwer < .05 & z < 0, .(gene)])))`
+
+* Total pairs of genes and cell types: `r num.int(nrow(hc.ms.deg))`
+
+```{r Fig_DEG_count, fig.width=2, fig.height=2, echo = FALSE, results="asis"}
+.df <- count.deg(hc.ms.deg)
+
+plt <-
+    .gg.plot(.df, aes(x = celltype, y = n, group = direction, fill = direction)) +
+    theme(legend.position = c(1,1)) +
+    theme(legend.justification = c(1,1)) +
+    xlab("cell type") + ylab("# DEG") +
+    geom_bar(stat="identity") +
+    geom_text(aes(y=nc, label=n)) +
+    scale_fill_manual(values = c("#ef8a62","#67a9cf"))
+
+print(plt)
+.file <- fig.dir %&% "/Fig_DEG_count.pdf"
+.gg.save(filename = .file, plot = plt, width=2, height=2)
+```
+
+```{r}
+.multi <-
+    hc.ms.deg[fwer < 1e-2, .(n = .N), by = .(gene)] %>%
+    dplyr::filter(n > 1) %>%
+    .select(gene)
+```
+
+## Cell-type-specific gene ontology enrichment, removing `r num.int(length(.multi))` genes
+
+```{r test_go}
+run.goseq <- function(.dt, .ct, fwer.cutoff, strict.bg = FALSE) {
+
+    if(strict.bg){
+        .temp <- .dt[celltype == .ct]
+    } else {
+        .temp <- .dt
+    }
+
+    .genes <- .temp[, .(ensembl_gene_id)] %>%
+        unique %>%
+        unlist
+
+    .de.genes <- .temp[celltype == .ct &
+                       fwer < fwer.cutoff,
+                       .(ensembl_gene_id)] %>%
+        unique %>%
+        unlist
+
+    gene.vector <- as.integer(.genes %in% .de.genes)
+    names(gene.vector) <- .genes
+    pwf <- goseq::nullp(gene.vector, "hg19", "ensGene", plot.fit=FALSE)
+    go.dt <- goseq::goseq(pwf, "hg19", "ensGene", use_genes_without_cat = TRUE) %>%
+        as.data.table
+}
+
+plot.go.heatmap <- function(go.ct.dt, .celltype.order, fdr.cutoff = .1, .ntop = NULL) {
+
+    if(is.null(.ntop)) {
+        go.show <- go.ct.dt[qv < fdr.cutoff & numDEInCat > 2,
+                            .(term)] %>% unique
+    } else {
+        go.show <- go.ct.dt[qv < fdr.cutoff & numDEInCat > 2] %>%
+            group_by(celltype) %>%
+            top_n(.ntop, numDEInCat/numInCat) %>%
+            ungroup %>%
+            dplyr::select(term) %>%
+            unique
+    }
+
+    .dt <-
+        merge(go.show, go.ct.dt) %>%
+        mutate(row = celltype, col = term, weight = -log10(pv)) %>%
+        col.order(.ro = .celltype.order, ret.tab = TRUE) %>%
+        as.data.table
+
+    .aes <- aes(y = col, x = row,
+                size = -log10(pmax(pv, 1e-6)),
+                fill = log10(numDEInCat))
+
+    .scale.fill <-
+        scale_fill_distiller("#genes",
+                             palette = "RdPu",
+                             direction = 1,
+                             labels=function(x) round(10^(x)))
+
+    .scale.size <-
+        scale_size_continuous("p-value",
+                              breaks = seq(0,10,2),
+                              range=c(0, 3),
+                              labels=function(x) num.sci(10^(-x)))
+
+    plt <-
+        .gg.plot(.dt, .aes) +
+        theme(axis.text.x = element_text(angle=90, vjust=1, hjust=1)) +
+        theme(legend.key.width = unit(.2, "lines")) +
+        theme(legend.key.height = unit(.5, "lines")) +
+        geom_point(pch = 22, stroke=.1) +
+        .scale.fill +
+        xlab("cell type") + ylab("gene ontology") +
+        .scale.size
+
+    .nrow <- length(unique(.dt$term))
+    .ncol <- length(unique(.dt$celltype))
+    .lab <- max(sapply(.dt$term, nchar))
+
+    list(plt = plt,
+         w = (.lab * .05 + .ncol * .075 + 1),
+         h = ceiling(.1 * .nrow + .25))
+}
+
+save.heatmap <- function(.obj, .file) {
+    .mkdir(dirname(.file))
+    .gg.save(filename=.file, cat.link=FALSE, .obj$plt, width = .obj$w, height = .obj$h)
+}
+
+.dt <-
+    hc.ms.deg %>%
+    dplyr::filter(!(gene %in% .multi)) %>%
+    dplyr::rename(hgnc_symbol = gene) %>%
+    left_join(fread("data/gene.info.gz")) %>%
+    na.omit
+
+.ct.order <- c("mTreg","nTreg","mTconv","nTconv")
+
+go.result.dt <-
+    lapply(.ct.order,
+           function(.ct)
+               run.goseq(.dt, .ct, fwer.cutoff = 0.05) %>%
+               mutate(celltype = .ct)
+           ) %>%
+    do.call(what=rbind) %>%
+    mutate(pv = over_represented_pvalue) %>%
+    mutate(qv = p.adjust(pv, "fdr")) %>%
+    as.data.table
+```
+
+```{r Fig_GO_, results = "asis", echo = FALSE}
+plt <-
+    go.result.dt[ontology == "BP"] %>%
+    plot.go.heatmap(.ct.order, fdr.cutoff = 0.05, .ntop=15)
+
+.file <- fig.dir %&% "/Fig_GO_BP.pdf"
+save.heatmap(plt, .file)
+cat("[GO BP](" %&% .file %&% ") ")
+
+plt <-
+    go.result.dt[ontology == "MF"] %>%
+    plot.go.heatmap(.ct.order, fdr.cutoff = 0.05, .ntop=15)
+
+.file <- fig.dir %&% "/Fig_GO_MF.pdf"
+save.heatmap(plt, .file)
+cat("[GO MF](" %&% .file %&% ") ")
+
+plt <-
+    go.result.dt[ontology == "CC"] %>%
+    plot.go.heatmap(.ct.order, fdr.cutoff = 0.05, .ntop=15)
+
+.file <- fig.dir %&% "/Fig_GO_CC.pdf"
+save.heatmap(plt, .file)
+cat("[GO CC](" %&% .file %&% ") ")
+```
+
+#### Show genes with FWER $< 0.05$
+
+```{r Fig_DEG_example, results="asis", echo = FALSE}
+.genes.ms <-
+    hc.ms.deg[fwer < 0.05 &
+           sign(ADD) == sign(z) &
+           sign(ADC) == sign(z),
+           .(gene)] %>%
+    unique %>% unlist
+
+for(g in .genes.ms){
+    .file <- fig.dir %&% "/Fig_DEG_example_" %&% g %&% ".pdf"
+    if(!file.exists(.file)) {
+        plt <- show.each.gene(g, pb.data, hc.ms.deg)
+        .gg.save(filename = .file, cat.link = FALSE, plot = plt, width=5, height=3)
+    }
+    cat("[" %&% g %&% "](" %&% .file %&% ") ")
+}
+cat("\n\n\n")
+```

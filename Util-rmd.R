@@ -247,3 +247,8 @@ summary.enrichment.stat <- function(tab) {
                pval = pval)
 }
 
+################################################################
+if.needed <- function(.file, .code) {
+    if(!all(file.exists(unlist(.file)))){ .code }
+    stopifnot(all(file.exists(unlist(.file))))
+}

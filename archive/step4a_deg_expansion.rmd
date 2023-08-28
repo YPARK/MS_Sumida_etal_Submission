@@ -1,0 +1,225 @@
+---
+title: "Differential Expansion analysis at the top-level cell types"
+author: Yongjin Park
+theme: jekyll-theme-minimal
+date: "`r Sys.Date()`"
+bibliography: "reference.bib"
+---
+
+```{r GlobOpt, include=FALSE}
+fig.dir = 'Fig/STEP4A/'
+knitr::opts_knit$set(eval.after = 'fig.cap')
+knitr::opts_chunk$set(warning = FALSE, message = FALSE, fig.path = fig.dir)
+knitr::opts_chunk$set(fig.width=8, fig.height=8)
+options(stringsAsFactors = FALSE)
+FIG.CAP = '**Fig.**'
+
+library(tidyverse)
+library(data.table)
+library(patchwork)
+source("Util-rmd.R")
+.mkdir(fig.dir)
+```
+
+```{r helper_functions}
+.fwrite <- function(...) fwrite(..., quote=FALSE, sep="\t", row.names = FALSE, col.names = FALSE)
+
+.fwrite.safe <- function(.dt, .file, ...) {
+    if(!file.exists(.file)) fwrite(.dt, .file, ...)
+}
+
+.files.exist <- function(...){
+    lapply(..., file.exists) %>%
+        unlist() %>%
+        all()
+}
+
+summarize.deg <- function(.dt, tot.cutoff = 1, disease.name = "MS", control.name = "HA") {
+
+    ## adjust potential bias
+    .dt[`tot` >= tot.cutoff, b := mean(cfa), by = .(gene, celltype)]
+    .dt[, cfa := cfa - b]
+
+    .sd <- .dt[`tot` >= tot.cutoff,
+               .(min.sd = sd(cfa) / sqrt(.N)),
+               by = .(gene, celltype)]
+
+    .dt <- .dt %>%
+        filter(`tot` >= tot.cutoff) %>%
+        left_join(.sd) %>%
+        mutate(w = 1/(cfa.sd^2 + min.sd^2)) %>%
+        as.data.table
+
+    ## average disease effect on the disease subjects
+    ADD.dt <-
+        .dt[disease == disease.name & `tot` >= tot.cutoff,
+               .(ADD = sum(cfa * w) / sum(w),
+                 ADD.se = sqrt(1/sum(w))),
+               by = .(gene, celltype)]
+
+    ## average disease effect on the control subjects
+    ADC.dt <-
+        .dt[disease == control.name & `tot` >= tot.cutoff,
+               .(ADC = -sum(cfa * w)/ sum(w),
+                 ADC.se = sqrt(1/sum(w))),
+               by = .(gene, celltype)]
+
+    ## average disease effect
+    ADE.dt <-
+        .dt[`tot` >= tot.cutoff] %>%
+        mutate(cfa.s = if_else(disease == disease.name, 1, -1) * cfa) %>%
+        mutate(tot.s = if_else(disease == disease.name, 1, -1) * tot) %>%
+        as.data.table %>%
+        (function(xx) {
+            xx[,
+               .(ADE = sum(cfa.s * w) / sum(w),
+                 ADE.se = sqrt(1/sum(w))),
+               by = .(gene, celltype)
+               ]
+        }) %>%
+        mutate(z = ADE/ADE.se) %>%
+        mutate(pv = 2 * pnorm(abs(z), lower.tail=FALSE)) %>%
+        mutate(fwer = p.adjust(pv, "holm")) %>%
+        as.data.table
+
+    left_join(ADE.dt, ADD.dt) %>% left_join(ADC.dt) %>% as.data.table
+}
+```
+
+# Result
+
+```{r read_celltype_annot}
+.annot.file <- "result/step2/assignment/round1.RDS"
+.annot.out <- readRDS(.annot.file)
+.col <- c("tag", "celltype", "prob", "ln.prob")
+annot.dt <- setDT(.annot.out$annotation)
+names(annot.dt) <- .col
+annot.dt[, c("barcode","batch") := tstrsplit(tag, split="_")]
+annot.dt[, j := 1:.N]
+annot.dt[, batch := as.integer(`batch`)]
+
+hash.info <- fread("data/cell_info_batch3-7.csv.gz") %>%
+    rename(tag = cbid, subject = id) %>%
+    mutate(disease = substr(`subject`, 1, 2))
+```
+
+```{r prepare_input_data}
+library(mmutilR)
+## This may contain unannotated cells, but will be filtered out
+.mtx.data <- fileset.list("result/step1/rna")
+
+sort.col <- function(.mat, .cts, .indvs){
+
+    .fun <- function(ct) paste0(.indvs, "_", ct)
+
+    .samples <-
+        lapply(.cts, .fun) %>%
+        do.call(what=c) %>%
+        sort()
+
+    .idx <- match(.samples, colnames(.mat))
+    .idx <- .idx[!is.na(.idx)]
+    .mat[, .idx, drop = FALSE]
+}
+
+combine.statistics <- function(.result){
+
+    ret <- lapply(names(.result), function(v) {
+        .mat <- .result[[v]]
+        if(!is.matrix(.mat)) return(NULL)
+        as.data.table(reshape2::melt(.mat, value.name = v))
+    })
+
+    out <- ret[[1]]
+    for(j in 2:length(ret)){
+        if(is.null(out)) {
+            out <- ret[[j]]
+        } else if(!is.null(ret[[j]])) {
+            out <- merge(out, ret[[j]])
+        }
+    }
+    return(out)
+}
+```
+
+## Can clonal expansion explain differential expression genes?
+
+```{r}
+tcr.dt <- fread("data/tcr_shared.txt.gz")
+
+.tcr.annot.hash <-
+    tcr.dt[, .(barcode, batch, Expanded, Expansion)] %>%
+    left_join(annot.dt) %>%
+    left_join(hash.info) %>%
+    mutate(Expanded = gsub(" ", "", Expanded)) %>%
+    mutate(ind = subject %&% "." %&% Expanded) %>%
+    na.omit()
+
+.make.data <- function(.data, .cells){
+    if(!.files.exist(.data)){
+        .out <- gsub(".mtx.gz$","",.data$mtx)
+        rcpp_mmutil_copy_selected_columns(.mtx.data$mtx,
+                                          .mtx.data$row,
+                                          .mtx.data$col,
+                                          .cells,
+                                          .out)
+    }
+}
+
+.mkdir("result/step4a/deg")
+.hc.data <- fileset.list("result/step4a/deg/HC")
+.make.data(.hc.data, unique(.tcr.annot.hash[disease=="HA"]$tag))
+
+.ms.data <- fileset.list("result/step4a/deg/MS")
+.make.data(.ms.data, unique(.tcr.annot.hash[disease=="MS"]$tag))
+
+.run.cocoa <- function(.data){
+    .celltype <- .tcr.annot.hash[, .(tag, celltype)]
+    .cell2indv <- .tcr.annot.hash[, .(tag, ind)]
+    .indv2exp <- unique(.tcr.annot.hash[, .(ind, Expanded)])
+    make.cocoa(.data, .celltype, .cell2indv, .indv2exp,
+               knn=100, .rank=10, .take.ln = TRUE,
+               num.threads=24)
+}
+
+.hc.stat.file <- "result/step4a/deg/HC.RDS"
+if(!.files.exist(.hc.stat.file)){
+    .hc.stat <- .run.cocoa(.hc.data)
+    saveRDS(.hc.stat, .hc.stat.file)
+}
+
+.ms.stat.file <- "result/step4a/deg/MS.RDS"
+if(!.files.exist(.ms.stat.file)){
+    .ms.stat <- .run.cocoa(.ms.data)
+    saveRDS(.ms.stat, .ms.stat.file)
+}
+
+.cts <- unique(.tcr.annot.hash$celltype)
+.indvs <- sort(unique(.tcr.annot.hash$ind))
+
+.take.summary <- function(.deg.stat){
+    .dt <-
+        list(tot = sort.col(.deg.stat$sum, .cts, .indvs),
+             cfa = sort.col(.deg.stat$resid.ln.mu, .cts, .indvs),
+             cfa.sd = sort.col(.deg.stat$resid.ln.mu.sd, .cts, .indvs)) %>%
+        combine.statistics()
+
+    .dt[, c("subject","disease","celltype") := tstrsplit(`Var2`,split="[._]")]
+    .dt[, gene := `Var1`]
+    .dt[, `Var1` := NULL]
+    .dt[, `Var2` := NULL]
+
+    summarize.deg(.dt,
+                  disease.name="Expanded",
+                  control.name="Notexpanded")
+}
+
+.ms.stat.dt <- .take.summary(readRDS(.ms.stat.file))
+.hc.stat.dt <- .take.summary(readRDS(.hc.stat.file))
+```
+
+
+```{r}
+fwrite(.ms.stat.dt, "Tab/MS_expansion.txt.gz")
+fwrite(.hc.stat.dt, "Tab/HC_expansion.txt.gz")
+```
