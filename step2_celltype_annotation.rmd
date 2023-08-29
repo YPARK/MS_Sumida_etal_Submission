@@ -572,7 +572,7 @@ plot.marker.umap <- function(.marker) {
         ggtitle(.marker) +
         xlab("UMAP 1") + ylab("UMAP 2") +
         theme_minimal() +
-        geom_point(stroke=.0, size=.7, alpha=.8) +
+        ggrastr::rasterise(geom_point(stroke=.0, size=.7, alpha=.8), dpi=300) +
         theme(legend.key.width = unit(.2, "lines"),
               legend.key.height = unit(.5, "lines"),
               legend.title = element_text(size=6),
