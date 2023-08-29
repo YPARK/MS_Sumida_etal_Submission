@@ -209,16 +209,21 @@ print(plt)
 
 * Keep `r num.int(nrow(.qc.dt[qc == "pass"]))` cells, discard `r num.int(nrow(.qc.dt[qc == "fail"]))` cells
 
-```{r Fig_svd_batch, results="asis", fig.width=2, fig.height=2, echo = FALSE}
+```{r Fig_svd_batch, results="asis", fig.width=4, fig.height=2, echo = FALSE}
 .temp <- .qc.dt[qc == "pass"]
 .temp[, c("barcode","batch") := tstrsplit(`name`, split="_")]
-plt <-
+p1 <-
     .gg.plot(.temp[sample(nrow(.temp))], aes(x=PC1, y=PC2)) +
-    geom_point(aes(fill=batch), size = 1, pch = 21, stroke=0, show.legend=FALSE) +
+    ggrastr::rasterize(geom_point(aes(fill=batch), size = 1, pch = 21, stroke=0, show.legend=FALSE), dpi=300) +
     scale_fill_brewer(palette = "Spectral")
+p2 <-
+    .gg.plot(.temp[sample(nrow(.temp))], aes(x=PC2, y=PC3)) +
+    ggrastr::rasterize(geom_point(aes(fill=batch), size = 1, pch = 21, stroke=0, show.legend=FALSE), dpi=300) +
+    scale_fill_brewer(palette = "Spectral")
+plt <- p1 | p2
 print(plt)
 .file <- fig.dir %&% "/Fig_svd_batch.pdf"
-.gg.save(filename = .file, plot = plt, width=2, height=2)
+.gg.save(filename = .file, plot = plt, width=4, height=2)
 ```
 
 ## Matrix data after Q/C: `r num.int(nrow(.qc.dt[qc == "pass"]))` cells

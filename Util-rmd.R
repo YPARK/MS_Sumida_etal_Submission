@@ -51,7 +51,7 @@ log.msg <- function(...) {
         ggplot2::theme_classic() +
         ggplot2::theme(plot.background = element_blank(),
                        plot.margin = unit(c(0,.5,0,.5), 'lines'),
-                       panel.background = element_rect(size = 0, fill = 'gray95'),
+                       panel.background = element_rect(linewidth = 0, fill = 'gray95'),
                        strip.background = element_blank(),
                        legend.background = element_blank(),
                        legend.text = element_text(size = 6),
@@ -60,7 +60,7 @@ log.msg <- function(...) {
                        legend.key.width = unit(1, 'lines'),
                        legend.key.height = unit(.2, 'lines'),
                        legend.key.size = unit(1, 'lines'),
-                       axis.line = element_line(color = 'gray20', size = .5),
+                       axis.line = element_line(color = 'gray20', linewidth = .5),
                        axis.text = element_text(size = 6))
 }
 
