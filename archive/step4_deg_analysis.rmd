@@ -3,7 +3,7 @@ title: "Differential Expression analysis at the top-level cell types"
 author: Yongjin Park
 theme: jekyll-theme-minimal
 date: "`r Sys.Date()`"
-bibliography: "reference.bib"
+bibliography: "MS_Ref.bib"
 ---
 
 ```{r GlobOpt, include=FALSE}
@@ -40,14 +40,9 @@ summarize.deg <- function(.dt, tot.cutoff = 1, disease.name = "MS", control.name
     .dt[`tot` >= tot.cutoff, b := mean(cfa), by = .(gene, celltype)]
     .dt[, cfa := cfa - b]
 
-    .sd <- .dt[`tot` >= tot.cutoff,
-               .(min.sd = sd(cfa) / sqrt(.N)),
-               by = .(gene, celltype)]
-
     .dt <- .dt %>%
         filter(`tot` >= tot.cutoff) %>%
-        left_join(.sd) %>%
-        mutate(w = 1/(cfa.sd^2 + min.sd^2)) %>%
+        mutate(w = 1/cfa.sd^2) %>%
         as.data.table
 
     ## average disease effect on the disease subjects
@@ -79,6 +74,7 @@ summarize.deg <- function(.dt, tot.cutoff = 1, disease.name = "MS", control.name
         }) %>%
         mutate(z = ADE/ADE.se) %>%
         mutate(pv = 2 * pnorm(abs(z), lower.tail=FALSE)) %>%
+        mutate(fdr = p.adjust(pv, "fdr")) %>%
         mutate(fwer = p.adjust(pv, "holm")) %>%
         as.data.table
 

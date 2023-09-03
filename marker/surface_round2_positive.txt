@@ -1,13 +1,11 @@
 anti_CD3 TH1
 anti_CD3 TH1/17
-anti_CD3 TH17
 anti_CD3 TH2
-anti_CD3 TFH
+anti_CD3 TH17
 anti_CD4 TH1
 anti_CD4 TH1/17
-anti_CD4 TH17
 anti_CD4 TH2
-anti_CD4 TFH
+anti_CD4 TH17
 anti_CD183 TH1
 anti_CD183 TH1/17
 CXCR3 TH1
@@ -20,5 +18,3 @@ anti_CD196 TH1/17
 anti_CD196 TH17
 CCR6 TH1/17
 CCR6 TH17
-anti_CD195 TFH
-CCR5 TFH

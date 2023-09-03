@@ -3,7 +3,7 @@ title: "Merge data sets and perform simple Q/C"
 author: Yongjin Park
 theme: jekyll-theme-minimal
 date: "`r Sys.Date()`"
-bibliography: "reference.bib"
+bibliography: "MS_Ref.bib"
 ---
 
 

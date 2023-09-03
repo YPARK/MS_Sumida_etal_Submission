@@ -64,6 +64,11 @@ log.msg <- function(...) {
                        axis.text = element_text(size = 6))
 }
 
+.more.colors <- function(nc, nc.pal = 7, .palette="Paired"){
+    .map <- colorRampPalette(RColorBrewer::brewer.pal(nc.pal, .palette))
+    .map(nc)
+}
+
 load.data <- function(fileName){
     load(fileName)
     get(ls()[ls() != "fileName"])
@@ -252,3 +257,17 @@ if.needed <- function(.file, .code) {
     if(!all(file.exists(unlist(.file)))){ .code }
     stopifnot(all(file.exists(unlist(.file))))
 }
+
+################################################################
+make.gs.lol <- function(.dt) {
+    .dt <- as.data.table(.dt) %>% unique()
+    .list <-
+        .dt[, .(gene = .(gene_symbol)), by = .(gs_name)] %>%
+        as.list()
+    .names <- .list$gs_name
+    .ret <- .list$gene
+    names(.ret) <- .names
+    return(.ret)
+}
+
+

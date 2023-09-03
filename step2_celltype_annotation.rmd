@@ -2,7 +2,7 @@
 title: "Cell type annotation and topic modelling"
 date: "`r Sys.Date()`"
 author: Yongjin Park
-bibliography: "reference.bib"
+bibliography: "MS_Ref.bib"
 ---
 
 
@@ -133,7 +133,7 @@ if.needed(.file, {
 
     .bbknn <- rcpp_mmutil_bbknn_pca(.prot.data$mtx,
                                     .batches$batch,
-                                    knn = 10, RANK = 20,
+                                    knn = 50, RANK = 10,
                                     EM_ITER = 20,
                                     TAKE_LN = TRUE)
     saveRDS(.bbknn, .file)
@@ -245,7 +245,7 @@ if.needed(.file, {
 
     .bbknn <- rcpp_mmutil_bbknn_pca(.gene.data$mtx,
                                     .batches$batch,
-                                    knn = 10, RANK = 30,
+                                    knn = 50, RANK = 50,
                                     EM_ITER = 20,
                                     TAKE_LN = TRUE,
                                     NUM_THREADS = 8)
@@ -255,7 +255,7 @@ if.needed(.file, {
 ```
 
 ```{r}
-run.bbknn.umap <- function(.bbknn, .cells, ...){
+run.bbknn.umap <- function(.bbknn, .cells, res = .3, ...){
 
     .df <- data.frame(from = .bbknn$knn$src.index,
                       to = .bbknn$knn$tgt.index,
@@ -266,7 +266,7 @@ run.bbknn.umap <- function(.bbknn, .cells, ...){
     nrepeat <- 20
     C <- list(modularity = 0)
     for(r in 1:nrepeat){
-        c.r <- igraph::cluster_louvain(G, resolution = .75)
+        c.r <- igraph::cluster_louvain(G, resolution = res)
         message(paste("modularity: ", c.r$modularity, "\n"))
         if(r == 1 || max(c.r$modularity) > max(C$modularity)){
             C <- c.r
@@ -276,9 +276,11 @@ run.bbknn.umap <- function(.bbknn, .cells, ...){
     .clust <- data.table(tag = .cells[as.integer(C$names)],
                          membership = C$membership)
 
-    A <- igraph::as_adj(G)
+    A <- igraph::as_adj(G, attr="weight")
 
-    umap.A <- uwot::optimize_graph_layout(A, verbose = TRUE, n_sgd_threads = "auto", ...)
+    umap.A <- uwot::optimize_graph_layout(A, verbose = TRUE,
+                                          n_sgd_threads = "auto",
+                                          ...)
 
     .dt <- data.table(tag = .cells[as.integer(rownames(A))],
                       umap1 = umap.A[,1],
@@ -297,12 +299,19 @@ run.bbknn.umap <- function(.bbknn, .cells, ...){
 .file <- "result/step2/gene_bbknn_louvain.txt.gz"
 .cells <- readLines(.gene.data$col)
 if.needed(.file, {
-    .bbknn.umap <- run.bbknn.umap(.bbknn, .cells, spread=3)
+    .bbknn.umap <- run.bbknn.umap(.bbknn, .cells)
     fwrite(.bbknn.umap, .file)
 })
+
 .bbknn.umap <- fread(.file) %>%
     left_join(annot.dt, by = "tag") %>% 
     mutate(membership = as.factor(membership))
+
+## remove small clusters for visualization
+.size <- .bbknn.umap[, .(.N), by = .(membership)]
+.bbknn.umap <-
+    .size[N > 100, .(membership)] %>%
+    left_join(.bbknn.umap, by = "membership")
 ```
 
 ### Clustering patterns in scRNA-seq agrees with the classification results based on surface proteins
@@ -310,16 +319,16 @@ if.needed(.file, {
 ```{r Fig_bbknn_gene_only_umap, fig.width=8, fig.height=3, results="asis"}
 p1 <-
     .gg.plot(.bbknn.umap, aes(umap1, umap2, color=membership)) +
-    geom_point(stroke=0, alpha=.8, size=.5)
-    ggrastr::rasterise(geom_point(stroke=0, alpha=.8, size=.5), dpi=300)
+    ggrastr::rasterise(geom_point(stroke=0, alpha=.8, size=.7), dpi=300)
 
 p2 <-
     .gg.plot(.bbknn.umap, aes(umap1, umap2, color=celltype)) +
-    ggrastr::rasterise(geom_point(stroke=0, alpha=.8, size=.5), dpi=300) +
+    ggrastr::rasterise(geom_point(stroke=0, alpha=.8, size=.7), dpi=300) +
     scale_color_brewer(palette = "Paired")
 
 plt <- p1 | p2
 print(plt)
+
 .file <- fig.dir %&% "/Fig_bbknn_gene_only_umap.pdf"
 .gg.save(filename = .file, plot = plt, width=8, height=3)
 ```
@@ -362,7 +371,7 @@ if.needed(.file, {
 
     .bbknn <- rcpp_mmutil_bbknn_pca(.data$mtx,
                                     .batches$batch,
-                                    knn = 10, RANK = 30,
+                                    knn = 50, RANK = 50,
                                     EM_ITER = 20,
                                     TAKE_LN = TRUE,
                                     NUM_THREADS = 8)
@@ -420,22 +429,29 @@ print(plt)
 .file <- "result/step2/full_bbknn_louvain.txt.gz"
 .cells <- readLines(.data$col)
 if.needed(.file, {
-    .bbknn.umap <- run.bbknn.umap(.bbknn, .cells, spread=3)
+    .bbknn.umap <- run.bbknn.umap(.bbknn, .cells)
     fwrite(.bbknn.umap, .file)
 })
+
 .bbknn.umap <- fread(.file) %>%
     left_join(annot.dt, by = "tag") %>% 
     mutate(membership = as.factor(membership))
+
+## remove small clusters for visualization
+.size <- .bbknn.umap[, .(.N), by = .(membership)]
+.bbknn.umap <-
+    .size[N > 100, .(membership)] %>%
+    left_join(.bbknn.umap, by = "membership")
 ```
 
 ```{r Fig_bbknn_full_umap, fig.width=8, fig.height=3, results="asis"}
 p1 <-
     .gg.plot(.bbknn.umap, aes(umap1, umap2, color=membership)) +
-    ggrastr::rasterise(geom_point(stroke=0, alpha=.8, size=.5), dpi=300)
+    ggrastr::rasterise(geom_point(stroke=0, alpha=.8, size=.7), dpi=300)
 
 p2 <-
     .gg.plot(.bbknn.umap, aes(umap1, umap2, color=celltype)) +
-    ggrastr::rasterise(geom_point(stroke=0, alpha=.8, size=.5), dpi=300) +
+    ggrastr::rasterise(geom_point(stroke=0, alpha=.8, size=.7), dpi=300) +
     scale_color_brewer(palette = "Paired")
 
 plt <- p1 | p2
@@ -486,7 +502,9 @@ celltype.final <-
     .bbknn.umap %>%
     rename(celltype.protein = celltype) %>%
     (function(x) left_join(.valid.celltype.cluster, x)) %>%
-    na.omit()
+    filter(celltype.protein == celltype) %>%
+    na.omit() %>%
+    as.data.table
 ```
 
 ```{r results="asis", echo=FALSE}
@@ -497,14 +515,13 @@ cat("[**DOWNLOAD:** Cell type estimation]("%&% .file %&% ")\n\n")
 ```
 
 ```{r Fig_bbknn_final_umap, fig.width=8, fig.height=3, results="asis"}
-
 p1 <-
     .gg.plot(celltype.final, aes(umap1, umap2, color=membership)) +
-    ggrastr::rasterise(geom_point(stroke=0, alpha=.8, size=.5), dpi=300)
+    ggrastr::rasterise(geom_point(stroke=0, alpha=.8, size=.7), dpi=300)
 
 p2 <-
     .gg.plot(celltype.final, aes(umap1, umap2, color=celltype)) +
-    ggrastr::rasterise(geom_point(stroke=0, alpha=.8, size=.5), dpi=300) +
+    ggrastr::rasterise(geom_point(stroke=0, alpha=.8, size=.7), dpi=300) +
     scale_color_brewer(palette = "Paired")
 
 plt <- p1 | p2
