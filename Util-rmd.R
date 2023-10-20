@@ -57,8 +57,6 @@ log.msg <- function(...) {
                        legend.text = element_text(size = 6),
                        legend.title = element_text(size = 6),
                        axis.title = element_text(size = 8),
-                       legend.key.width = unit(1, 'lines'),
-                       legend.key.height = unit(.2, 'lines'),
                        legend.key.size = unit(1, 'lines'),
                        axis.line = element_line(color = 'gray20', linewidth = .5),
                        axis.text = element_text(size = 6))

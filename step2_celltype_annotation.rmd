@@ -255,6 +255,26 @@ if.needed(.file, {
 ```
 
 ```{r}
+degree.cutoff <- function(G, .cutoff = 3) {
+    G.sub <- G
+    n.remove <- sum(igraph::degree(G.sub) < .cutoff)
+    while(n.remove > 0){
+        vv <- igraph::V(G.sub)
+        .retain <- vv[igraph::degree(G.sub) >= .cutoff]
+        G.sub <- igraph::induced_subgraph(G.sub, .retain)
+        n.remove <- sum(igraph::degree(G.sub) < .cutoff)
+    }
+    return(G.sub)
+}
+
+comp.cutoff <- function(G, .cutoff = 10){
+    .comp <- igraph::components(G)
+    .kk <- which(.comp$csize >= .cutoff) # valid component(s)
+    .valid <- which(.comp$membership %in% .kk) # valid nodes
+    G <- igraph::induced_subgraph(G, igraph::V(G)[.valid])
+    return(G)
+}
+
 run.bbknn.umap <- function(.bbknn, .cells, res = .3, ...){
 
     .df <- data.frame(from = .bbknn$knn$src.index,
@@ -262,6 +282,8 @@ run.bbknn.umap <- function(.bbknn, .cells, res = .3, ...){
                       weight = .bbknn$knn$weight)
 
     G <- igraph::graph_from_data_frame(.df, directed=FALSE)
+    G <- comp.cutoff(G, 10)
+    G <- degree.cutoff(G, 3)
 
     nrepeat <- 20
     C <- list(modularity = 0)
