@@ -483,7 +483,7 @@ show.each.gene <- function(g, .data, .stat, .cutoff = 0) {
     unlist()
 
 .genes.show <-
-    hc.ms.deg[fwer < 1e-2 &
+    hc.ms.deg[fwer < 0.05 &
               gene %in% .bulk.genes &
               sign(ADD) == sign(ADE) &
               sign(ADC) == sign(ADE)] %>%
