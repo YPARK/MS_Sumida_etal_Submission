@@ -5,7 +5,6 @@ author: Yongjin Park
 bibliography: "MS_Ref.bib"
 ---
 
-
 ```{r GlobOpt, include = FALSE}
 ################################################################
 fig.dir = 'Fig/STEP2/'
@@ -62,8 +61,8 @@ plt.scatter.ct.2 <- function(.ct.show, .assign.tab, .mtx,
         .plt +
             theme_classic() +
             theme(axis.text = element_text(size=6)) +
-            scale_x_continuous(breaks=.brk, labels=.lab) +
-            scale_y_continuous(breaks=.brk, labels=.lab) +
+            scale_x_continuous(breaks=.brk, labels=.lab, limits=c(-.1,3.2)) +
+            scale_y_continuous(breaks=.brk, labels=.lab, limits=c(-.1,3.2)) +
             theme(axis.text.x = element_text(angle=90, vjust=1, hjust=1)) +
             facet_grid(.~celltype) +
             stat_density_2d(geom = "raster",
@@ -85,6 +84,7 @@ plt.scatter.ct.2 <- function(.ct.show, .assign.tab, .mtx,
 }
 ```
 
+
 # Round 1: Top-level cell type annotation
 
 ## Can we distinguish cell types by surface proteins?
@@ -98,22 +98,19 @@ plt.scatter.ct.2 <- function(.ct.show, .assign.tab, .mtx,
 }
 ```
 
-```{r}
+```{r select_proteins_only, echo = FALSE}
 .hdr <- "result/step1/matrix_final"
 .data <- fileset.list(.hdr)
-```
 
-```{r select_proteins_only, echo = FALSE}
-.proteins <-
-    .fread(.data$row, col.names="feat") %>%
-    filter(str_starts(feat, "anti_")) %>%
-    unlist()
-  
 .mkdir("result/step2")
 .prot.hdr <- "result/step2/prot"
 .prot.data <- fileset.list(.prot.hdr)
 
 if.needed(.prot.data, {
+    .proteins <-
+        .fread(.data$row, col.names="feat") %>%
+        filter(str_starts(feat, "anti_")) %>%
+        unlist()
     .prot.data <-
         rcpp_mmutil_copy_selected_rows(.data$mtx,
                                        .data$row,
@@ -126,14 +123,15 @@ if.needed(.prot.data, {
 
 ```{r run_bbknn_protein_data}
 .file <- "result/step2/prot_bbknn.rds"
+
 if.needed(.file, {
     
     .batches <- .fread(.prot.data$col, col.names="tag")
     .batches[, c("barcode","batch") := tstrsplit(tag, "_")]
 
-    .bbknn <- rcpp_mmutil_bbknn_pca(.prot.data$mtx,
+    .bbknn <- rcpp_mmutil_bbknn_svd(.prot.data$mtx,
                                     .batches$batch,
-                                    knn = 50, RANK = 10,
+                                    knn = 10, RANK = 10,
                                     EM_ITER = 20,
                                     TAKE_LN = TRUE)
     saveRDS(.bbknn, .file)
@@ -150,11 +148,10 @@ Run annotation purely based on marker genes:
 
 ```{r run_annotation_bbknn_adjusted}
 .file <- "result/step2/prot_annot.txt.gz"
+
 if.needed(.file, {
-    
     .pos.markers <- .read.marker.file("marker/surface_round1_positive.txt")
     .neg.markers <- .read.marker.file("marker/surface_round1_negative.txt")
-
     .annot.out <-
         rcpp_mmutil_annotate_columns(
             pos_labels = list(p1=.pos.markers),
@@ -191,6 +188,7 @@ colnames(prot.mtx) <- readLines(.prot.data$col)
 .ct <- c("mTreg","nTreg","mTconv","nTconv")
 plt <- plt.scatter.ct.2(.ct, annot.dt, prot.mtx)
 print(plt)
+
 .file <- fig.dir %&% "/Fig_round1_cdmarker_bbknn.pdf"
 .gg.save(filename = .file, plot = plt, width=6, height=5)
 ```
@@ -205,6 +203,7 @@ colnames(prot.raw.mtx) <- readLines(.prot.data$col)
 .ct <- c("mTreg","nTreg","mTconv","nTconv")
 plt <- plt.scatter.ct.2(.ct, annot.dt, prot.raw.mtx)
 print(plt)
+
 .file <- fig.dir %&% "/Fig_round1_cdmarker.pdf"
 .gg.save(filename = .file, plot = plt, width=6, height=5)
 ```
@@ -215,16 +214,16 @@ print(plt)
 .hdr <- "result/step1/matrix_final"
 .data <- fileset.list(.hdr)
 
-.genes <-
-    .fread(.data$row, col.names="feat") %>%
-    filter(!str_starts(feat, "anti_")) %>%
-    unlist()
-  
 .mkdir("result/step2")
 .gene.hdr <- "result/step2/gene"
 .gene.data <- fileset.list(.gene.hdr)
 
 if.needed(.gene.data, {
+    .genes <-
+        .fread(.data$row, col.names="feat") %>%
+        filter(!str_starts(feat, "anti_")) %>%
+        unlist()
+
     .gene.data <-
         rcpp_mmutil_copy_selected_rows(.data$mtx,
                                        .data$row,
@@ -234,18 +233,15 @@ if.needed(.gene.data, {
 })
 ```
 
-
 ```{r run_bbknn_genes_only}
 .file <- "result/step2/gene_bbknn.rds"
 
 if.needed(.file, {
-
     .batches <- .fread(.gene.data$col, col.names="tag")
     .batches[, c("barcode","batch") := tstrsplit(tag, "_")]
-
-    .bbknn <- rcpp_mmutil_bbknn_pca(.gene.data$mtx,
+    .bbknn <- rcpp_mmutil_bbknn_svd(.gene.data$mtx,
                                     .batches$batch,
-                                    knn = 50, RANK = 50,
+                                    knn = 10, RANK = 30,
                                     EM_ITER = 20,
                                     TAKE_LN = TRUE,
                                     NUM_THREADS = 8)
@@ -254,7 +250,7 @@ if.needed(.file, {
 .bbknn <- readRDS(.file)
 ```
 
-```{r}
+```{r visualization_routines}
 degree.cutoff <- function(G, .cutoff = 3) {
     G.sub <- G
     n.remove <- sum(igraph::degree(G.sub) < .cutoff)
@@ -275,22 +271,25 @@ comp.cutoff <- function(G, .cutoff = 10){
     return(G)
 }
 
-run.bbknn.umap <- function(.bbknn, .cells, res = .3, ...){
+run.bbknn.umap <- function(.bbknn, .cells, res=.3, nrepeat=20, ...){
 
-    .df <- data.frame(from = .bbknn$knn$src.index,
-                      to = .bbknn$knn$tgt.index,
-                      weight = .bbknn$knn$weight)
+    .dt <- data.table(from = c(.bbknn$knn$src.index,.bbknn$knn$tgt.index),
+                      to = c(.bbknn$knn$tgt.index,.bbknn$knn$src.index),
+                      weight = c(.bbknn$knn$weight, .bbknn$knn$weight))
+    
+    .df <-
+        .dt[`from` != `to`,
+            .(weight = mean(`weight`)),
+            by = .(`from`, `to`)] %>%
+        as.data.frame()
 
     G <- igraph::graph_from_data_frame(.df, directed=FALSE)
-    G <- comp.cutoff(G, 10)
-    G <- degree.cutoff(G, 3)
 
-    nrepeat <- 20
-    C <- list(modularity = 0)
+    C <- list(quality = 0)
     for(r in 1:nrepeat){
-        c.r <- igraph::cluster_louvain(G, resolution = res)
-        message(paste("modularity: ", c.r$modularity, "\n"))
-        if(r == 1 || max(c.r$modularity) > max(C$modularity)){
+        c.r <- igraph::cluster_leiden(G, resolution_parameter = res, objective_function = "modularity")
+        message(paste("quality: ", c.r$quality, "\n"))
+        if(r == 1 || max(c.r$quality) > max(C$quality)){
             C <- c.r
         }
     }
@@ -298,45 +297,61 @@ run.bbknn.umap <- function(.bbknn, .cells, res = .3, ...){
     .clust <- data.table(tag = .cells[as.integer(C$names)],
                          membership = C$membership)
 
+    G <- comp.cutoff(G, 10)
+    G <- degree.cutoff(G, 3)
     A <- igraph::as_adj(G, attr="weight")
 
     umap.A <- uwot::optimize_graph_layout(A, verbose = TRUE,
                                           n_sgd_threads = "auto",
                                           ...)
 
-    .dt <- data.table(tag = .cells[as.integer(rownames(A))],
-                      umap1 = umap.A[,1],
-                      umap2 = umap.A[,2]) %>% 
-        left_join(.clust, by = "tag")
+    .dt <-
+        data.table(tag = .cells[as.integer(rownames(A))],
+                   umap1 = umap.A[,1],
+                   umap2 = umap.A[,2]) %>% 
+        (function(x) left_join(.clust, x, by = "tag")) %>%
+        as.data.table()
+    return(.dt)
 }
 ```
 
 1. Build a batch-balancing kNN graph
 
-2. Louvain graph-based clustering
+2. Leiden graph-based clustering
 
 3. Construct UMAP the kNN backbone graph
 
-```{r}
-.file <- "result/step2/gene_bbknn_louvain.txt.gz"
+```{r bbknn_umap_leiden_by_genes}
+.file <- "result/step2/gene_bbknn_leiden.txt.gz"
 .cells <- readLines(.gene.data$col)
 if.needed(.file, {
-    .bbknn.umap <- run.bbknn.umap(.bbknn, .cells)
+    .bbknn.umap <- run.bbknn.umap(.bbknn, .cells,
+                                  min_dist=0,
+                                  spread=3)
     fwrite(.bbknn.umap, .file)
 })
 
 .bbknn.umap <- fread(.file) %>%
     left_join(annot.dt, by = "tag") %>% 
-    mutate(membership = as.factor(membership))
+    mutate(membership = as.factor(membership)) %>%
+    as.data.table()
 
-## remove small clusters for visualization
+## remove cells too far from the centre
+## in order to show more cells
+.bbknn.umap[, x := scale(umap1)]
+.bbknn.umap[, y := scale(umap2)]
+.bbknn.umap[, d := sqrt(x^2 + y^2)]
+
 .size <- .bbknn.umap[, .(.N), by = .(membership)]
+
 .bbknn.umap <-
-    .size[N > 100, .(membership)] %>%
-    left_join(.bbknn.umap, by = "membership")
+    .size[N > 0, .(membership)] %>%
+    left_join(.bbknn.umap, by = "membership") %>%
+    filter(`d` < 2.2) %>%
+    as.data.table()
 ```
 
-### Clustering patterns in scRNA-seq agrees with the classification results based on surface proteins
+### Clustering patterns in scRNA-seq generally agrees with the classification results based on surface proteins
 
 ```{r Fig_bbknn_gene_only_umap, fig.width=8, fig.height=3, results="asis"}
 p1 <-
@@ -355,6 +370,7 @@ print(plt)
 .gg.save(filename = .file, plot = plt, width=8, height=3)
 ```
 
+However, gene expression patterns may not be sufficient. 
 
 ```{r Fig_bbknn_gene_only_cluster, fig.width=5, fig.height=2, results="asis"}
 .ct.mem <- .bbknn.umap[, .(nc = .N), by = .(celltype, membership)]
@@ -366,9 +382,10 @@ print(plt)
     mutate(row = celltype, col = membership,
            weight = logit(pmax(pmin(pr, 1-1e-2), 1e-2))) %>% 
     order.pair(ret.tab = TRUE)
+
 plt <- 
     .gg.plot(.df, aes(col, row, fill=weight, size = `nc`)) +
-    xlab("Louvain clustering") +
+    xlab("Leiden clustering") +
     ylab("cell type") +
     theme(legend.position = "bottom") +
     geom_point(pch=22) +
@@ -377,6 +394,7 @@ plt <-
                          palette="PuRd", direction = 1,
                          labels=function(x) round(sigmoid(x), 2))
 print(plt)
+
 .file <- fig.dir %&% "/Fig_bbknn_gene_only_cluster.pdf"
 .gg.save(filename = .file, plot = plt, width=5, height=2)
 ```
@@ -391,9 +409,9 @@ if.needed(.file, {
     .batches <- .fread(.data$col, col.names="tag")
     .batches[, c("barcode","batch") := tstrsplit(tag, "_")]
 
-    .bbknn <- rcpp_mmutil_bbknn_pca(.data$mtx,
+    .bbknn <- rcpp_mmutil_bbknn_svd(.data$mtx,
                                     .batches$batch,
-                                    knn = 50, RANK = 50,
+                                    knn = 10, RANK = 30,
                                     EM_ITER = 20,
                                     TAKE_LN = TRUE,
                                     NUM_THREADS = 8)
@@ -407,7 +425,6 @@ if.needed(.file, {
 ```{r run_annotation_bbknn_adjusted_full}
 .file <- "result/step2/prot_annot_full.txt.gz"
 if.needed(.file, {
-    
     .pos.markers <- .read.marker.file("marker/surface_round1_positive.txt")
     .neg.markers <- .read.marker.file("marker/surface_round1_negative.txt")
 
@@ -422,6 +439,7 @@ if.needed(.file, {
             r_V = .bbknn$factors.adjusted,
             EM_TOL = 1e-6,
             EM_ITER = 500)
+
     annot.dt <- setDT(.annot.out$annotation)
     .col <- c("tag", "celltype", "prob", "ln.prob")
     names(annot.dt) <- .col
@@ -441,43 +459,58 @@ colnames(prot.raw.mtx) <- readLines(.prot.data$col)
 .ct <- c("mTreg","nTreg","mTconv","nTconv")
 plt <- plt.scatter.ct.2(.ct, annot.dt, prot.raw.mtx)
 print(plt)
+
 .file <- fig.dir %&% "/Fig_round1_cdmarker_full.pdf"
 .gg.save(filename = .file, plot = plt, width=6, height=5)
 ```
 
 ### 2. Graph-based clustering
 
-```{r run_louvain_full}
-.file <- "result/step2/full_bbknn_louvain.txt.gz"
+```{r run_leiden_full}
+.file <- "result/step2/full_bbknn_leiden.txt.gz"
 .cells <- readLines(.data$col)
 if.needed(.file, {
-    .bbknn.umap <- run.bbknn.umap(.bbknn, .cells)
+    .bbknn.umap <- run.bbknn.umap(.bbknn, .cells,
+                                  res=1.5,
+                                  nrepeat=50,
+                                  min_dist=1e-4,
+                                  spread=3)
     fwrite(.bbknn.umap, .file)
 })
 
 .bbknn.umap <- fread(.file) %>%
     left_join(annot.dt, by = "tag") %>% 
-    mutate(membership = as.factor(membership))
+    mutate(membership = as.factor(membership)) %>%
+    as.data.table()
 
-## remove small clusters for visualization
+## remove cells too far from the centre
+## in order to show more cells
+.bbknn.umap[, x := scale(umap1)]
+.bbknn.umap[, y := scale(umap2)]
+.bbknn.umap[, d := sqrt(x^2 + y^2)]
+
 .size <- .bbknn.umap[, .(.N), by = .(membership)]
+
 .bbknn.umap <-
-    .size[N > 100, .(membership)] %>%
-    left_join(.bbknn.umap, by = "membership")
+    .size[N > 0, .(membership)] %>%
+    left_join(.bbknn.umap, by = "membership") %>%
+    filter(`d` < 2.2) %>%
+    as.data.table()
 ```
 
 ```{r Fig_bbknn_full_umap, fig.width=8, fig.height=3, results="asis"}
 p1 <-
-    .gg.plot(.bbknn.umap, aes(umap1, umap2, color=membership)) +
+    .gg.plot(.bbknn.umap[sample(.N)], aes(umap1, umap2, color=membership)) +
     ggrastr::rasterise(geom_point(stroke=0, alpha=.8, size=.7), dpi=300)
 
 p2 <-
-    .gg.plot(.bbknn.umap, aes(umap1, umap2, color=celltype)) +
+    .gg.plot(.bbknn.umap[sample(.N)], aes(umap1, umap2, color=celltype)) +
     ggrastr::rasterise(geom_point(stroke=0, alpha=.8, size=.7), dpi=300) +
     scale_color_brewer(palette = "Paired")
 
 plt <- p1 | p2
 print(plt)
+
 .file <- fig.dir %&% "/Fig_bbknn_full_umap.pdf"
 .gg.save(filename = .file, plot = plt, width=8, height=3)
 ```
@@ -496,7 +529,7 @@ print(plt)
 
 plt <-
     .gg.plot(.df, aes(col, row, fill=weight, size = `nc`)) +
-    xlab("Louvain clustering") +
+    xlab("Leiden clustering") +
     ylab("cell type") +
     theme(legend.position = "bottom") +
     geom_point(pch=22) +
@@ -505,54 +538,145 @@ plt <-
                          palette="PuRd", direction = 1,
                          labels=function(x) round(sigmoid(x), 2))
 print(plt)
+
 .file <- fig.dir %&% "/Fig_bbknn_full_cluster.pdf"
 .gg.save(filename = .file, plot = plt, width=5, height=2)
 ```
 
-### 3. Refine cell type assignments with the clustering results
-
-```{r}
-.valid.clust <- .ct.mem[order(pr, decreasing = T),
-                        head(.SD, 1),
-                        by = .(membership)]
-
-.valid.celltype.cluster <-
-    .valid.clust[pr > .5, .(membership, celltype)] %>%
-    unique()
-
-celltype.final <- 
-    .bbknn.umap %>%
-    rename(celltype.protein = celltype) %>%
-    (function(x) left_join(.valid.celltype.cluster, x)) %>%
-    filter(celltype.protein == celltype) %>%
-    na.omit() %>%
-    as.data.table
-```
 
 ```{r results="asis", echo=FALSE}
-.file <- "Tab/step2_celltype_final.txt.gz"
+.file <- "result/step2/full_bbknn_leiden.txt.gz"
+.dt <- fread(.file) %>%
+    left_join(annot.dt, by = "tag") %>% 
+    as.data.table()
+```
+
+* Annotate each cell cluster with the maximally matching cell type
+
+```{r}
+## a. Assign cell types to clusters
+.size <- .dt[, .(.N), by = .(membership, celltype)]
+.argmax <- .size[order(`N`), tail(.SD, 1), by = .(membership)]
+```
+
+* `r length(unique(.argmax$membership))` modules
+
+* Remove clusters with too few cells (`N` $<$ 500) and retain `r nrow(.argmax[N > 500])` clusters
+
+```{r}
+.argmax[, `N` := NULL]
+celltype.final <-
+    fread(.file) %>%
+    left_join(.argmax) %>%
+    left_join(.size) %>%
+    as.data.table() %>%
+    na.omit()
+```
+
+```{r}
+## b. Remove small clusters
+celltype.final <- celltype.final[`N` > 500]
+```
+
+* `r num.int(nrow(celltype.final))` cells.
+
+```{r echo = F}
+celltype.final[, c("barcode","batch") := tstrsplit(`tag`, split="_")]
+celltype.final[, batch := as.integer(`batch`)]
+```
+
+Check with Liang's semi-supervised approach.
+
+```{r Fig_overlap_Liang, fig.width=3.2, fig.height=2.8}
+.overlap <- 
+    fread("data/PRDM1/PRDM1_SL.csv.gz") %>%
+    left_join(celltype.final) %>%
+    na.omit()
+
+.dt <- .overlap[, .(.N), by = .(cell_type_liang, celltype)]
+.dt <- .dt[, lab := num.int(`N`)]
+
+.aes <- aes(celltype, cell_type_liang, fill=`N`, label=`lab`)
+plt <- .gg.plot(.dt, .aes) +
+    geom_tile(linewidth=.1, colour="black") +
+    geom_text(size=3) +
+    scale_fill_distiller("N", direction=1) +
+    theme(axis.text.x = element_text(angle=90, vjust=1, hjust=1)) +
+    xlab("CD annotation + Leiden") +
+    ylab("Classifier (Liang)")
+print(plt)
+```
+
+
+
+```{r Fig_bbknn_refined_umap, fig.width=12, fig.height=3, results="asis"}
+## remove cells too far from the centre
+## in order to show more cells
+.temp <- fread("data/PRDM1/PRDM1_SL.csv.gz")
+.bbknn.umap <- celltype.final %>% left_join(.temp) %>% as.data.table()
+
+.bbknn.umap[, membership := as.factor(`membership`)]
+.bbknn.umap[, x := scale(umap1)]
+.bbknn.umap[, y := scale(umap2)]
+.bbknn.umap[, d := sqrt(x^2 + y^2)]
+.bbknn.umap <- .bbknn.umap[`d` < 2.2 & `N` > 500]
+
+p1 <-
+    .gg.plot(.bbknn.umap[sample(.N)], aes(umap1, umap2, color=membership)) +
+    ggrastr::rasterise(geom_point(stroke=0, alpha=.8, size=.7), dpi=300)
+
+p2 <-
+    .gg.plot(.bbknn.umap[sample(.N)], aes(umap1, umap2, color=celltype)) +
+    ggrastr::rasterise(geom_point(stroke=0, alpha=.8, size=.7), dpi=300) +
+    scale_color_brewer("annotation\n+Leiden", palette = "Paired")
+
+p3 <-
+    .gg.plot(.bbknn.umap[sample(.N)], aes(umap1, umap2, color=cell_type_liang)) +
+    ggrastr::rasterise(geom_point(stroke=0, alpha=.8, size=.7), dpi=300) +
+    scale_color_brewer("supervised", palette = "Paired")
+
+plt <- wrap_plots(p1, p2, p3, nrow=1)
+print(plt)
+
+.file <- fig.dir %&% "/Fig_bbknn_refined_umap.pdf"
+.gg.save(filename = .file, plot = plt, width=12, height=3)
+```
+
+
+```{r echo = F, results = "asis"}
+.file <- "Tab/step2_celltype.txt.gz"
 .mkdir("Tab/")
 if.needed(.file, fwrite(celltype.final, .file, sep = "\t", col.names = T))
 cat("[**DOWNLOAD:** Cell type estimation]("%&% .file %&% ")\n\n")
 ```
 
-```{r Fig_bbknn_final_umap, fig.width=8, fig.height=3, results="asis"}
-p1 <-
-    .gg.plot(celltype.final, aes(umap1, umap2, color=membership)) +
-    ggrastr::rasterise(geom_point(stroke=0, alpha=.8, size=.7), dpi=300)
 
-p2 <-
-    .gg.plot(celltype.final, aes(umap1, umap2, color=celltype)) +
-    ggrastr::rasterise(geom_point(stroke=0, alpha=.8, size=.7), dpi=300) +
-    scale_color_brewer(palette = "Paired")
+```{r Fig_bbknn_refined_cluster, fig.width=5, fig.height=2, results="asis"}
+.ct.mem <- celltype.final[, .(nc = .N), by = .(celltype, membership)]
+.ct.mem[, ntot := sum(`nc`), by = .(membership)]
+.ct.mem[, pr := `nc`/`ntot`]
 
-plt <- p1 | p2
+.df <- 
+    .ct.mem %>%
+    mutate(row = celltype, col = membership,
+           weight = logit(pmax(pmin(pr, 1-1e-2), 1e-2))) %>% 
+    order.pair(ret.tab = TRUE)
+
+plt <-
+    .gg.plot(.df, aes(col, row, size = `nc`)) +
+    xlab("Leiden clustering") +
+    ylab("cell type") +
+    theme(legend.position = "bottom") +
+    geom_point(pch=22, fill="black") +
+    scale_size_continuous("#cells", range=c(0,5))
 print(plt)
-.file <- fig.dir %&% "/Fig_bbknn_final_umap.pdf"
-.gg.save(filename = .file, plot = plt, width=8, height=3)
+
+.file <- fig.dir %&% "/Fig_bbknn_refined_cluster.pdf"
+.gg.save(filename = .file, plot = plt, width=5, height=2)
 ```
 
-### 4. Confirm by other marker genes/proteins
+
+### 3. Confirm by other marker genes/proteins
 
 ```{r}
 .markers <-
@@ -689,7 +813,8 @@ for(g in .markers){
     mutate(batch=as.integer(batch)) %>%
     left_join(.hash.info) %>%
     mutate(ct=factor(celltype, c("nTconv","mTconv","nTreg","mTreg"))) %>% 
-    left_join(.sample.info)
+    left_join(.sample.info) %>%
+    na.omit()
 ```
 
 ## Combining all the experiments
