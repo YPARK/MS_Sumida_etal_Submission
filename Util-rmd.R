@@ -12,7 +12,7 @@ logit <- function(x) log(x) - log(1 - x)
 
 meta.z <- function(z) mean(z) * sqrt(length(z))
 
-num.sci <- function(x) format(x, digits = 2, scientific = TRUE)
+num.sci <- function(x) format(x, digits = 3, scientific = TRUE)
 
 num.round <- function(x, d=2) round(x, digits = d) %>% as.character()
 
@@ -155,23 +155,19 @@ read.geneset <- function(ensg) {
     list(C = C.mat, gs = gs.tab)
 }
 
-################################################################
 #' Read gene ontology and coding genes
 read.ontology <- function() {
 
-    .temp.file <- ".ensembl.ontology.rdata"
+    .temp.file <- ".ensembl.ontology.rds"
 
-    if(file.exists(.temp.file)) {
-        load(.temp.file)
-
-    } else {
+    if(!file.exists(.temp.file)) {
 
         ensembl = biomaRt::useMart(biomart='ENSEMBL_MART_ENSEMBL',
-                                   host='uswest.ensembl.org',
                                    path='/biomart/martservice',
                                    dataset='hsapiens_gene_ensembl')
 
-        ensembl.hs = biomaRt::useDataset('hsapiens_gene_ensembl',mart=ensembl)
+        ensembl.hs = biomaRt::useDataset('hsapiens_gene_ensembl',
+                                         mart=ensembl)
 
         .attr = c('ensembl_gene_id',
                   'hgnc_symbol',
@@ -183,8 +179,6 @@ read.ontology <- function() {
                   'percentage_gene_gc_content')
 
         .temp = biomaRt::getBM(attributes=.attr,
-                               filters=c('biotype'),
-                               values=c('protein_coding'),
                                mart=ensembl.hs,
                                useCache = FALSE)
 
@@ -194,12 +188,12 @@ read.ontology <- function() {
 
         .temp <- as.data.table(.temp)
 
-        coding.genes = .temp[,
-                             .(hgnc_symbol = paste(unique(hgnc_symbol), collapse='|'),
-                               transcription_start_site = mean(transcription_start_site),
-                               transcript_start = min(transcript_start),
-                               transcript_end = max(transcript_end)),
-                             by = .(chromosome_name, ensembl_gene_id)]
+        .genes = .temp[,
+                       .(hgnc_symbol = paste(unique(hgnc_symbol), collapse='|'),
+                         transcription_start_site = mean(transcription_start_site),
+                         transcript_start = min(transcript_start),
+                         transcript_end = max(transcript_end)),
+                       by = .(chromosome_name, ensembl_gene_id)]
 
         ensg.tot = unique(coding.genes$ensembl_gene_id)
         go.attr = c('ensembl_gene_id', 'go_id',
@@ -211,14 +205,14 @@ read.ontology <- function() {
                                   mart = ensembl.hs,
                                   useCache = FALSE)
         .ensembl.ontology <- 
-            list(coding = coding.genes,
+            list(genes = .genes,
                  go = genes.go,
                  desc = genes.desc)
 
-        save(.ensembl.ontology, file=.temp.file)
+        saveRDS(.ensembl.ontology, .temp.file)
     }
 
-    return(.ensembl.ontology)
+    readRDS(.temp.file)
 }
 
 ################################################################
