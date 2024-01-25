@@ -886,13 +886,13 @@ print(plt)
 ```
 
 ```{r Fig_count_merged_stat_tot, fig.height=3, fig.width=2.2, echo = FALSE, results="asis"}
-.stat <-
+.stat.tot <-
     .dt[,
         .(N = .N),
         by=.(celltype, ct, disease)] %>%
     .sum.stat.tot %>%
     mutate(batch = "(N=" %&% num.int(sum(.stat$N)) %&% ")")
-plt <- .plt.sum.stat(.stat) +
+plt <- .plt.sum.stat(.stat.tot) +
     ggtitle("Profiled on all the samples")
 print(plt)
 .file <- fig.dir %&% "/Fig_count_merged_stat_tot.pdf"

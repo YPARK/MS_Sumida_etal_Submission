@@ -385,6 +385,75 @@ for(g in unique(x.melt$gene)) {
 }
 ```
 
+### Basic statistics
+
+```{r include=FALSE}
+.sum.stat.batch <- function(.dt) {
+    .dt %>%
+        group_by(batch, disease) %>%
+        mutate(P = 100 * N/sum(N)) %>%
+        arrange(desc(membership)) %>%
+        mutate(Pc = cumsum(P)) %>%
+        ungroup() %>%
+        group_by(batch) %>%
+        mutate(nb = sum(N)) %>%
+        ungroup() %>%
+        mutate(batch="#" %&% batch %&% " (N=" %&% num.int(nb) %&% ")")
+}
+.sum.stat.tot <- function(.dt) {
+    .dt %>%
+        group_by(disease) %>%
+        mutate(P = 100 * N/sum(N)) %>%
+        arrange(desc(membership)) %>%
+        mutate(Pc = cumsum(P)) %>%
+        ungroup()
+}
+.plt.sum.stat <- function(.stat, .pal = "Set1") {
+
+    K <- length(unique(.stat$membership))
+
+    .gg.plot(.stat, aes(x=disease, y=P, group=membership, fill=membership)) +
+        facet_grid(.~batch) +
+        geom_bar(stat="identity") +
+        geom_text(aes(y=Pc, label=num.int(N)), size=2) +
+        scale_fill_manual(values=.more.colors(K, nc.pal=12)) +
+        ylab("clustering membership (%)") +
+        theme(legend.title=element_blank())
+}
+```
+
+```{r Fig_count_mtconv_tot, fig.width=6, fig.height=3}
+.stat <-
+    .cells[,
+           .(N = .N),
+           by=.(batch, membership, disease)] %>%
+    .sum.stat.batch()
+
+plt <- .plt.sum.stat(.stat) + ggtitle("mTconv")
+print(plt)
+```
+
+```{r echo = FALSE, results="asis"}
+.file <- fig.dir %&% "/Fig_count_mtconv_tot.pdf"
+.gg.save(filename = .file, plot = plt, height=3, width=6)
+```
+
+```{r Fig_count_merged_mtconv_tot, fig.height=3, fig.width=2.2}
+.stat.tot <-
+    .cells[,
+           .(N = .N),
+           by=.(membership, disease)] %>%
+    .sum.stat.tot %>%
+    mutate(batch = "(N=" %&% num.int(sum(.stat$N)) %&% ")")
+
+plt <- .plt.sum.stat(.stat.tot) + ggtitle("mTconv")
+print(plt)
+```
+
+```{r echo = FALSE, results="asis"}
+.file <- fig.dir %&% "/Fig_count_merged_mtconv_tot.pdf"
+.gg.save(filename = .file, plot = plt, height=3, width=2.2)
+```
 
 
 ## 2. Memory Treg cells
@@ -622,6 +691,40 @@ for(g in unique(x.melt$gene)) {
     .gg.save(filename = .file, plot = plt, width=3, height=2.5)
 }
 ```
+
+```{r Fig_count_mtreg_tot, fig.width=6, fig.height=3}
+.stat <-
+    .cells[,
+           .(N = .N),
+           by=.(batch, membership, disease)] %>%
+    .sum.stat.batch()
+
+plt <- .plt.sum.stat(.stat) + ggtitle("mTreg")
+print(plt)
+```
+
+```{r echo = FALSE, results="asis"}
+.file <- fig.dir %&% "/Fig_count_mtreg_tot.pdf"
+.gg.save(filename = .file, plot = plt, height=3, width=6)
+```
+
+```{r Fig_count_merged_mtreg_tot, fig.height=3, fig.width=2.2}
+.stat.tot <-
+    .cells[,
+           .(N = .N),
+           by=.(membership, disease)] %>%
+    .sum.stat.tot %>%
+    mutate(batch = "(N=" %&% num.int(sum(.stat$N)) %&% ")")
+
+plt <- .plt.sum.stat(.stat.tot) + ggtitle("mTreg")
+print(plt)
+```
+
+```{r echo = FALSE, results="asis"}
+.file <- fig.dir %&% "/Fig_count_merged_mtreg_tot.pdf"
+.gg.save(filename = .file, plot = plt, height=3, width=2.2)
+```
+
 
 ### Can we find new marker genes/proteins for mTreg clusters?
 
