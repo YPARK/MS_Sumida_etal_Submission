@@ -3,6 +3,7 @@ options(stringsAsFactors = FALSE)
 library(tidyverse)
 library(data.table)
 library(ggrepel)
+library(matrixTests)
 
 `%&%` <- function(a, b) paste0(a, b)
 

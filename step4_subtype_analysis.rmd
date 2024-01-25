@@ -4,7 +4,13 @@ author: Yongjin Park
 theme: jekyll-theme-minimal
 date: "`r Sys.Date()`"
 bibliography: "MS_Ref.bib"
+output:
+  html_document:
+    toc: true
+    keep_md: true
+    self_contained: true
 ---
+
 
 ```{r GlobOpt, include = FALSE}
 fig.dir <- 'Fig/STEP4/'
@@ -18,20 +24,106 @@ library(data.table)
 library(tidyverse)
 library(patchwork)
 library(mmutilR)
+library(matrixTests)
 source("Util-rmd.R")
 source("Util-alg.R")
 ```
 
-## Goal: Identify cellular states/subtypes in memory T cells
+```{r helper_functions}
+parse.tag <- function(x) {
+    x[, c("barcode", "batch") := tstrsplit(tag, split="[_]")];
+    x[, barcode := gsub(`barcode`, pattern="-[0-9]$", replacement="")];
+    x[, batch := as.integer(`batch`)]
+    x;
+}
+parse.gene <- function(x){
+    x[, c("ensembl_gene_id","hgnc_symbol") := tstrsplit(`gene`,split="_")]
+    x[, i := 1:.N]
+    return(x)
+}
 
-## Results
+bbknn.x <- function(.data, .bbknn, .bbknn.umap) {
+    .cols <-
+        fread(.data$col, header=F, col.names = "tag") %>%
+        parse.tag() %>%
+        mutate(j = 1:n()) %>%
+        left_join(.bbknn.umap) %>%
+        na.omit() %>%
+        as.data.table()
+
+    .rows <-
+        fread(.data$row, col.names="gene", header=F) %>%
+        parse.gene()
+
+    uu <- .bbknn$U[.rows$i, , drop = F]
+    rownames(uu) <- .rows$hgnc_symbol
+    vv <- .bbknn$factors.adjusted[.cols$j, , drop = F]
+    rownames(vv) <- .cols$tag
+    X <- sweep(uu, 2, .bbknn$D, `*`) %*% t(vv)
+}
+
+bbknn.x.melt <- function(.data, .bbknn, .bbknn.umap) {
+    X <- bbknn.x(.data, .bbknn, .bbknn.umap)
+    ret <- reshape2::melt(X) %>% as.data.table()
+    ret[, x := scale(value), by = .(Var2)]
+    ret[, tag := Var2]
+    ret[, gene := Var1]
+    ret[, Var1 := NULL]
+    ret[, Var2 := NULL]
+    return(ret)
+}
+
+take.marker.stats <- function(x, dict){
+
+    require(matrixTests)
+
+    ret <- data.table()
+    for(k in unique(dict$membership)){
+        tag.k <- .bbknn.umap[membership == k]$tag
+        x.k <- x[, colnames(x) %in% tag.k, drop = F]
+        y.k <- x[, !(colnames(x) %in% tag.k), drop = F]
+        ## wilcox within vs. outside
+        wilcox.k <- row_wilcoxon_twosample(x.k, y.k)
+        ## t-test
+        ttest.k <- row_t_welch(x.k, y.k)
+        ret.k <- data.table(
+            gene = rownames(x),
+            membership = k,
+            wilcox.p = wilcox.k$pvalue,
+            ttest.t = ttest.k$statistic,
+            mean = ttest.k$mean.x,
+            mean.outside = ttest.k$mean.y,
+            sd = sqrt(ttest.k$var.x),
+            sd.outside = sqrt(ttest.k$var.y),
+            ttest.p = ttest.k$pvalue)
+        ret <- rbind(ret, ret.k)
+    }
+    return(ret)
+}
+```
+
+# Results
+
+* Marker genes well-known for mTconv cell subtype classification
+
+```{r}
+.markers <-
+    c("CCR4","CCR6","CXCR3","CXCR5",
+      "ABCA1","GBP4","CDCA7L","ITM2C","NR1D1",
+      "CTSH","GATA3","FHIT","CD40LG","C1orf162",
+      "MGATA4A","GZMK","IFNGR2",
+      "CD183","CD184","CD185","CD196","CD195","CD194") %>%
+    unique
+```
+
+* Goal: Identify cellular states/subtypes in memory T cells
 
 ```{r read_sample_info, inclue = FALSE}
 .sample.info <-
     readxl::read_xlsx("data/Hashing list MS Treg project.xlsx", 1) %>%
     mutate(disease=substr(`subject`,1,2)) %>%
-    mutate(hash = gsub(pattern="#", replacement="", `hash`)) %>% 
-    mutate(hash = as.integer(hash)) %>% 
+    mutate(hash = gsub(pattern="#", replacement="", `hash`)) %>%
+    mutate(hash = as.integer(hash)) %>%
     as.data.table()
 ```
 
@@ -43,14 +135,9 @@ source("Util-alg.R")
 .hash.argmax <- apply(.hash.mtx, 2, which.max)
 
 .hash.cells <- .hash.data$col %>%
-    fread(header=F, col.names="cell") %>%
-    (function(x) {
-        x[,c("barcode","batch"):=tstrsplit(`cell`,split="_")];
-        x[, barcode := gsub(`barcode`, pattern="-[0-9]$", replacement="")];
-        x[, hash := .hash.argmax]
-        x[, batch := as.integer(`batch`)]
-        return(x);
-    })
+    fread(header=F, col.names="tag") %>%
+    parse.tag() %>%
+    mutate(hash = .hash.argmax)
 
 .hash.info <-
     left_join(.hash.cells, .sample.info)
@@ -60,8 +147,7 @@ source("Util-alg.R")
 annot.dt <- fread("Tab/step2_celltype.txt.gz")
 ```
 
-### 1. Memory T conventional
-
+## 1. Memory T conventional
 
 ```{r take_subset_mtconv}
 .full.data <- fileset.list("result/step1/matrix_final")
@@ -79,18 +165,15 @@ if.needed(.data, {
 })
 ```
 
+### Clustering cells by batch-balancing k-nearest neighbour graph
 
 ```{r run_bbknn_mtconv}
 .file <- "result/step4/mtconv_bbknn.rds"
 if.needed(.file, {
 
-    .batches <- fread(.data$col, col.names="cell", header=F) %>%
-        (function(x) {
-            x[, c("barcode", "batch") := tstrsplit(cell, split="[_]")];
-            x[, barcode := gsub(`barcode`, pattern="-[0-9]$", replacement="")];
-            x[, batch := as.integer(`batch`)]
-            x;
-        }) %>%
+    .batches <-
+        fread(.data$col, col.names="tag", header=F) %>%
+        parse.tag() %>% 
         left_join(.hash.info)
 
     bb <- .batches %>%
@@ -110,9 +193,8 @@ if.needed(.file, {
 
 ```{r bbknn_umap_leiden_mtconv}
 .file <- "result/step4/mtconv_bbknn_leiden.txt.gz"
-.cells <- readLines(.data$col)
-
 if.needed(.file, {
+    .cells <- readLines(.data$col)
     .bbknn.umap <- run.bbknn.umap(.bbknn$knn,
                                   .cells,
                                   symmetrize=T,
@@ -124,20 +206,16 @@ if.needed(.file, {
 
 .bbknn.umap <- fread(.file)
 .bbknn.umap[, membership := as.factor(membership)]
+```
 
+```{r include = F}
 .cells <-
-    data.table::copy(.bbknn.umap) %>% 
-    (function(x) {
-        x[, c("barcode", "batch") := tstrsplit(tag, split="[_]")];
-        x[, barcode := gsub(`barcode`, pattern="-[0-9]$", replacement="")];
-        x[, batch := as.integer(`batch`)]
-        x;
-    }) %>%
+    data.table::copy(.bbknn.umap) %>%
+    parse.tag() %>%
     left_join(.hash.info) %>%
     select(barcode, batch, hash, subject, tag, membership,
            umap1, umap2, disease)
 ```
-
 
 ```{r echo = F, results = "asis"}
 .file <- "Tab/step4_mtconv_cluster.txt.gz"
@@ -149,6 +227,24 @@ if.needed(.file,
 cat("[**DOWNLOAD:** mTconv clustering results]("%&% .file %&% ")\n\n")
 ```
 
+### What are the cell-cluster-specific marker genes?
+
+```{r find_mtconv_marker_genes}
+.mkdir("Tab/")
+.file <- "Tab/step4_mtconv_gene_stat.txt.gz"
+if.needed(.file, {
+    x <- bbknn.x(.data, .bbknn, .bbknn.umap)
+    marker.stat <- take.marker.stats(x, .bbknn.umap)
+    fwrite(marker.stat, .file, sep = "\t", col.names = T)
+})
+marker.stat <- fread(.file, sep = "\t")
+```
+
+```{r echo = F, results = "asis"}
+cat("[**DOWNLOAD:** mTconv marker gene statistics]("%&% .file %&% ")\n\n")
+```
+
+### Non-linear embedding to confirm the cell clusters of mTconv cells
 
 ```{r Fig_bbknn_mtconv, fig.width=3, fig.height=3}
 .lab <-
@@ -182,25 +278,13 @@ print(plt)
 .gg.save(filename = .file, plot = plt, width=3, height=3)
 ```
 
-
-```{r}
-.markers <-
-    c("CCR4","CCR6","CXCR3","CXCR5",
-      "ABCA1","GBP4","CDCA7L","ITM2C","NR1D1",
-      "CTSH","GATA3","FHIT","CD40LG","C1orf162",
-      "MGATA4A","GZMK","IFNGR2",
-      "CD183","CD184","CD185","CD196","CD195","CD194") %>%
-    unique
-```
-
-
 ```{r select_mtconv_marker_genes}
 .rows <- fread(.data$row, col.names="gene", header=F)
 .rows[, c("ensembl_gene_id","hgnc_symbol") := tstrsplit(`gene`,split="_")]
 .rows[, r := 1:.N]
 
 .cols <- fread(.data$col, col.names="tag", header=F) %>%
-    mutate(c = 1:n()) %>% 
+    mutate(c = 1:n()) %>%
     left_join(.cells) %>%
     na.omit() %>%
     as.data.table()
@@ -235,12 +319,12 @@ x.melt[, gene := Var1]
 
 ```{r Fig_mtconv_sum_membership, fig.width=1.8, fig.height=3}
 .sum <-
-    .sum.subj[, .(x = median(x)), by = .(gene, membership)] %>% 
+    .sum.subj[, .(x = median(x)), by = .(gene, membership)] %>%
     mutate(col = `gene`, row = membership, weight = x) %>%
-    col.order(1:10, TRUE) %>% 
+    col.order(1:10, TRUE) %>%
     as.data.table()
 
-plt <- 
+plt <-
     .gg.plot(.sum, aes(row, col, fill=pmin(pmax(weight, -1.5), 1.5)))+
     geom_tile(linewidth=.1, color="black") +
     scale_fill_distiller("", palette = "RdBu", direction = -1) +
@@ -263,7 +347,7 @@ print(plt)
     mutate(gene = factor(`gene`, .marker.order)) %>%
     mutate(t = subject %&% "." %&% membership)
 
-plt <- 
+plt <-
     .gg.plot(.dt, aes(`t`, `gene`, fill=pmin(pmax(`x`, -1.5), 1.5))) +
     facet_grid(. ~ membership, space="free", scales="free")+
     geom_tile(linewidth=.1, color="black") +
@@ -303,7 +387,7 @@ for(g in unique(x.melt$gene)) {
 
 
 
-### 2. Memory Treg cells
+## 2. Memory Treg cells
 
 ```{r take_subset_mtreg}
 .full.data <- fileset.list("result/step1/matrix_final")
@@ -321,17 +405,15 @@ if.needed(.data, {
 })
 ```
 
+### Clustering cells by batch-balancing k-nearest neighbour graph
+
 ```{r run_bbknn_mtreg}
 .file <- "result/step4/mtreg_bbknn.rds"
 if.needed(.file, {
 
-    .batches <- fread(.data$col, col.names="cell", header=F) %>%
-        (function(x) {
-            x[, c("barcode", "batch") := tstrsplit(cell, split="[_]")];
-            x[, barcode := gsub(`barcode`, pattern="-[0-9]$", replacement="")];
-            x[, batch := as.integer(`batch`)]
-            x;
-        }) %>%
+    .batches <-
+        fread(.data$col, col.names="tag", header=F) %>%
+        parse.tag() %>% 
         left_join(.hash.info)
 
     bb <- .batches %>%
@@ -366,21 +448,16 @@ if.needed(.file, {
 
 .bbknn.umap <- fread(.file)
 .bbknn.umap[, membership := as.factor(membership)]
+```
 
+```{r include = F}
 .cells <-
-    data.table::copy(.bbknn.umap) %>% 
-    (function(x) {
-        x[, c("barcode", "batch") := tstrsplit(tag, split="[_]")];
-        x[, barcode := gsub(`barcode`, pattern="-[0-9]$", replacement="")];
-        x[, batch := as.integer(`batch`)]
-        x;
-    }) %>%
+    data.table::copy(.bbknn.umap) %>%
+    parse.tag() %>%
     left_join(.hash.info) %>%
     select(barcode, batch, hash, subject, tag, membership,
            umap1, umap2, disease)
 ```
-
-
 
 ```{r echo = F, results = "asis"}
 .file <- "Tab/step4_mtreg_cluster.txt.gz"
@@ -392,6 +469,24 @@ if.needed(.file,
 cat("[**DOWNLOAD:** mTreg clustering results]("%&% .file %&% ")\n\n")
 ```
 
+### What are the cell-cluster-specific marker genes?
+
+```{r find_mtreg_marker_genes}
+.mkdir("Tab/")
+.file <- "Tab/step4_mtreg_gene_stat.txt.gz"
+if.needed(.file, {
+    x <- bbknn.x(.data, .bbknn, .bbknn.umap)
+    marker.stat <- take.marker.stats(x, .bbknn.umap)
+    fwrite(marker.stat, .file, sep = "\t", col.names = T)
+})
+marker.stat <- fread(.file, sep = "\t")
+```
+
+```{r echo = F, results = "asis"}
+cat("[**DOWNLOAD:** mTreg marker gene statistics]("%&% .file %&% ")\n\n")
+```
+
+### Non-linear embedding to confirm the cell clusters of mTreg cells
 
 ```{r Fig_bbknn_mtreg, fig.width=3, fig.height=3}
 .lab <-
@@ -411,6 +506,7 @@ print(plt)
 .gg.save(filename = .file, plot = plt, width=3, height=3)
 ```
 
+#### Subject-level variation is not the major source of this clustering pattern.
 
 ```{r Fig_bbknn_mtreg_sub, fig.width=3, fig.height=3}
 .cols <- .more.colors(10, nc.pal=7, .palette="Set1")
@@ -424,6 +520,7 @@ print(plt)
 .gg.save(filename = .file, plot = plt, width=3, height=3)
 ```
 
+#### Confirm cell type identity based on known marker genes?
 
 ```{r select_mtreg_marker_genes}
 .rows <- fread(.data$row, col.names="gene", header=F)
@@ -431,12 +528,11 @@ print(plt)
 .rows[, r := 1:.N]
 
 .cols <- fread(.data$col, col.names="tag", header=F) %>%
-    mutate(c = 1:n()) %>% 
+    mutate(c = 1:n()) %>%
     left_join(.cells) %>%
     na.omit() %>%
     as.data.table()
 ```
-
 
 ```{r}
 rr <- .rows[hgnc_symbol %in% .markers]$r
@@ -456,18 +552,19 @@ x.melt[, tag := Var2]
 x.melt[, gene := Var1]
 ```
 
-
 ```{r}
 .dt <- x.melt %>% left_join(.cells)
 .sum.subj <- .dt[, .(x = median(x)), by = .(gene, subject, membership)]
 .sum.subj[, x := scale(x), by = .(gene)]
 ```
 
+#### Summary
+
 ```{r Fig_mtreg_sum_membership, fig.width=2, fig.height=3}
 .sum <-
-    .sum.subj[, .(x = median(x)), by = .(gene, membership)] %>% 
+    .sum.subj[, .(x = median(x)), by = .(gene, membership)] %>%
     mutate(row = `gene`, col = membership, weight = x) %>%
-    col.order(.marker.order, TRUE) %>% 
+    col.order(.marker.order, TRUE) %>%
     as.data.table()
 
 plt <-
@@ -506,7 +603,6 @@ print(plt)
 .gg.save(filename = .file, plot = plt, width=6, height=3)
 ```
 
-
 ```{r Fig_mtreg_gene_umap, fig.width=3, fig.height=2.5}
 for(g in unique(x.melt$gene)) {
     .dt <- left_join(x.melt[gene == g], .cells)
@@ -527,4 +623,21 @@ for(g in unique(x.melt$gene)) {
 }
 ```
 
+### Can we find new marker genes/proteins for mTreg clusters?
+
+```{r select_top_markers}
+## Actually, p-values are meaningless because we did clustering based
+## on expression and testing the significance of clustering results.
+.stat <- 
+    marker.stat[p.adjust(wilcox.p) < .01 &
+                p.adjust(ttest.p) < .01 &
+                ttest.t > 0]
+
+.top.markers <- 
+    .stat[order(`ttest.t`, `sd`, decreasing = T),
+          head(.SD, 10),
+          by = .(membership)]
+
+top.stat <- .stat[gene %in% .top.markers$gene]
+```
 

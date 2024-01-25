@@ -3,6 +3,10 @@ title: "Step 2: cell type annotation"
 date: "`r Sys.Date()`"
 author: Yongjin Park
 bibliography: "MS_Ref.bib"
+output:
+  html_document:
+    toc: true
+    keep_md: true
 ---
 
 ```{r GlobOpt, include = FALSE}
@@ -159,7 +163,7 @@ annot.dt <- fread(.file)
 
 Two-dimensional density plot on the raw CD marker concentrations.
 
-```{r Fig_round1_cdmarker, fig.width=6, fig.height=5, results="asis"}
+```{r Fig_round1_cdmarker, fig.width=6, fig.height=5}
 prot.raw.mtx <- read.dense(.prot.data$mtx)
 .names <- sapply(readLines(.prot.data$row),
                  function(s) unlist(strsplit(s, split="[_]+"))[1],
@@ -187,7 +191,9 @@ rownames(prot.raw.mtx) <- unlist(.dt[, 1])
 .ct <- c("mTreg","nTreg","mTconv","nTconv")
 plt <- plt.scatter.ct.2(.ct, annot.dt, prot.raw.mtx)
 print(plt)
+```
 
+```{r results="asis", echo=F}
 .file <- fig.dir %&% "/Fig_round1_cdmarker.pdf"
 .gg.save(filename = .file, plot = plt, width=6, height=5)
 ```
@@ -333,7 +339,7 @@ if.needed(.file, {
 
 ### Clustering patterns in scRNA-seq generally agrees with the classification results based on surface proteins
 
-```{r Fig_bbknn_gene_only_umap, fig.width=8, fig.height=3, results="asis"}
+```{r Fig_bbknn_gene_only_umap, fig.width=8, fig.height=3}
 p1 <-
     .gg.plot(.bbknn.umap, aes(umap1, umap2, color=membership)) +
     ggrastr::rasterise(geom_point(stroke=0, alpha=.8, size=.7), dpi=300)
@@ -345,14 +351,16 @@ p2 <-
 
 plt <- p1 | p2
 print(plt)
+```
 
+```{r results="asis", echo=F}
 .file <- fig.dir %&% "/Fig_bbknn_gene_only_umap.pdf"
 .gg.save(filename = .file, plot = plt, width=8, height=3)
 ```
 
 However, gene expression patterns may not be sufficient. 
 
-```{r Fig_bbknn_gene_only_cluster, fig.width=5, fig.height=2, results="asis"}
+```{r Fig_bbknn_gene_only_cluster, fig.width=5, fig.height=2}
 .ct.mem <- .bbknn.umap[, .(nc = .N), by = .(celltype, membership)]
 .ct.mem[, ntot := sum(`nc`), by = .(membership)]
 .ct.mem[, pr := `nc`/`ntot`]
@@ -374,7 +382,9 @@ plt <-
                          palette="PuRd", direction = 1,
                          labels=function(x) round(sigmoid(x), 2))
 print(plt)
+```
 
+```{r results="asis", echo=F}
 .file <- fig.dir %&% "/Fig_bbknn_gene_only_cluster.pdf"
 .gg.save(filename = .file, plot = plt, width=5, height=2)
 ```
@@ -442,7 +452,7 @@ annot.dt <- fread(.file)
 
 Two-dimensional density plot on the raw CD marker concentrations.
 
-```{r Fig_round1_cdmarker_full, fig.width=6, fig.height=5, results="asis"}
+```{r Fig_round1_cdmarker_full, fig.width=6, fig.height=5}
 prot.raw.mtx <- read.dense(.prot.data$mtx)
 colnames(prot.raw.mtx) <- readLines(.prot.data$col)
 
@@ -457,7 +467,9 @@ rownames(prot.raw.mtx) <- .names
 .ct <- c("mTreg","nTreg","mTconv","nTconv")
 plt <- plt.scatter.ct.2(.ct, annot.dt, prot.raw.mtx)
 print(plt)
+```
 
+```{r results="asis", echo=F}
 .file <- fig.dir %&% "/Fig_round1_cdmarker_full.pdf"
 .gg.save(filename = .file, plot = plt, width=6, height=5)
 ```
@@ -501,7 +513,7 @@ if.needed(.file, {
     as.data.table()
 ```
 
-```{r Fig_bbknn_full_umap, fig.width=8, fig.height=3, results="asis"}
+```{r Fig_bbknn_full_umap, fig.width=8, fig.height=3}
 p1 <-
     .gg.plot(.bbknn.umap[sample(.N)], aes(umap1, umap2, color=membership)) +
     ggrastr::rasterise(geom_point(stroke=0, alpha=.8, size=.7), dpi=300)
@@ -513,13 +525,15 @@ p2 <-
 
 plt <- p1 | p2
 print(plt)
+```
 
+```{r results="asis", echo=F}
 .file <- fig.dir %&% "/Fig_bbknn_full_umap.pdf"
 .gg.save(filename = .file, plot = plt, width=8, height=3)
 ```
 
 
-```{r Fig_bbknn_full_cluster, fig.width=5, fig.height=2, results="asis"}
+```{r Fig_bbknn_full_cluster, fig.width=5, fig.height=2}
 .ct.mem <- .bbknn.umap[, .(nc = .N), by = .(celltype, membership)]
 .ct.mem[, ntot := sum(`nc`), by = .(membership)]
 .ct.mem[, pr := `nc`/`ntot`]
@@ -541,7 +555,9 @@ plt <-
                          palette="PuRd", direction = 1,
                          labels=function(x) round(sigmoid(x), 2))
 print(plt)
+```
 
+```{r results="asis", echo=F}
 .file <- fig.dir %&% "/Fig_bbknn_full_cluster.pdf"
 .gg.save(filename = .file, plot = plt, width=5, height=2)
 ```
@@ -899,7 +915,7 @@ print(plt)
 ```
 
 
-```{r Fig_count_merged_stat_cd4, fig.height=3, fig.width=2.2, echo = FALSE, results="asis"}
+```{r Fig_count_merged_stat_cd4, fig.height=3, fig.width=2.2}
 .stat <-
     .dt[Sample == "Total CD4T cells", .(N = .N), by=.(celltype, ct, disease)] %>%
     .sum.stat.tot %>%
@@ -907,13 +923,16 @@ print(plt)
 plt <- .plt.sum.stat(.stat) +
     ggtitle("Profiled on Total CD4 T-cells")
 print(plt)
+```
+
+```{r echo = FALSE, results="asis"}
 .file <- fig.dir %&% "/Fig_count_merged_stat_cd4.pdf"
 .gg.save(filename = .file, plot = plt, height=3, width=2.2)
 ```
 
 ## CD25 enriched samples
 
-```{r Fig_count_stat_cd25enriched, fig.height=3, fig.width=6, echo = FALSE, results="asis"}
+```{r Fig_count_stat_cd25enriched, fig.height=3, fig.width=6}
 .stat <-
     .dt[Sample == "CD25+ CD4T cells",
         .(N = .N),
@@ -922,11 +941,14 @@ print(plt)
 plt <- .plt.sum.stat(.stat) +
     ggtitle("Profiled on the CD25+ enriched")
 print(plt)
+```
+
+```{r echo = FALSE, results="asis"}
 .file <- fig.dir %&% "/Fig_count_stat_cd25enriched.pdf"
 .gg.save(filename = .file, plot = plt, height=3, width=6)
 ```
 
-```{r Fig_count_merged_stat_cd25enriched, fig.height=3, fig.width=2.2, echo = FALSE, results="asis"}
+```{r Fig_count_merged_stat_cd25enriched, fig.height=3, fig.width=2.2}
 .stat <-
     .dt[Sample == "CD25+ CD4T cells", .(N = .N), by=.(celltype, ct, disease)] %>%
     .sum.stat.tot %>%
@@ -934,6 +956,59 @@ print(plt)
 plt <- .plt.sum.stat(.stat) +
     ggtitle("Profiled on the CD25+ enriched")
 print(plt)
+```
+
+```{r echo = FALSE, results="asis"}
 .file <- fig.dir %&% "/Fig_count_merged_stat_cd25enriched.pdf"
 .gg.save(filename = .file, plot = plt, height=3, width=2.2)
 ```
+
+## PRDM1 short vs. long
+
+```{r include = FALSE}
+prdm.thm <-
+    theme_minimal() +
+    theme(legend.key.width = unit(.2, "lines"),
+          legend.key.height = unit(.5, "lines"),
+          legend.title = element_text(size=6),
+          legend.text = element_text(size=5))
+```
+
+```{r Fig_PRDM1_isoform_umap, fig.width=7, fig.height=3}
+prdm.dt <- fread("data/PRDM1/PRDM1_SL.csv.gz")
+
+.dt <-
+    copy(celltype.final) %>%
+    left_join(prdm.dt) %>%
+    na.omit() %>% 
+    as.data.table()
+
+.aes <- aes(umap1, umap2, colour=pmin(PRDM1_short, 3))
+
+p1 <-
+    ggplot(.dt[order(PRDM1_short)], .aes) +
+    xlab("UMAP 1") + ylab("UMAP 2") + prdm.thm +
+    ggrastr::rasterise(geom_point(stroke=0, size=1), dpi = 300) +
+    scale_colour_distiller("PRDM1\nshort",
+                           palette="RdPu",
+                           direction=1)
+
+.aes <- aes(umap1, umap2, colour = pmin(PRDM1_long, 3))
+
+p2 <-
+    ggplot(.dt[order(PRDM1_long)], .aes) +
+    xlab("UMAP 1") + ylab("UMAP 2") + prdm.thm +
+    ggrastr::rasterise(geom_point(stroke=0, size=1), dpi = 300) +
+    scale_colour_distiller("PRDM1\nlong",
+                           palette="RdPu",
+                           direction=1)
+
+plt <- p1 | p2
+print(plt)
+```
+
+```{r results="asis", echo=FALSE}
+.file <- fig.dir %&% "/Fig_PRDM1_isoform_umap.pdf"
+.gg.save(filename = .file, plot = plt, width=7, height=3)
+```
+
