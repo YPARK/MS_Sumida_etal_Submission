@@ -112,7 +112,14 @@ take.marker.stats <- function(x, dict){
       "ABCA1","GBP4","CDCA7L","ITM2C","NR1D1",
       "CTSH","GATA3","FHIT","CD40LG","C1orf162",
       "MGATA4A","GZMK","IFNGR2",
-      "CD183","CD184","CD185","CD196","CD195","CD194") %>%
+      "CD183","CD184","CD185","CD196","CD195","CD194",
+      "RORC", "TBX21", "HLADR", "CD74", "TCF7", "LEF1",
+      "SELL", "CCR7", "CCR8", "IKZF2", "TIGIT", "CD226",
+      "BATF", "ANXA2", "BRD9", "HPGD", "LMNA", "TNFRSF4",
+      "FOXP3", "FOXP1", "PDCD1", "CD279", "CTLA4", "LAG3",
+      "HAVCR2", "CD366", "KLRB1", "FOSL2", "S100A4", "GMAP7",
+      "JUN", "IL7R", "MYC", "IL32", "ISG20", "MALAT1",
+      "S1PR4", "KLF2", "SATB1", "TSC22D3", "IL2RA", "CD25") %>%
     unique
 ```
 
@@ -317,7 +324,7 @@ x.melt[, gene := Var1]
 .sum.subj[, x := scale(x), by = .(gene)]
 ```
 
-```{r Fig_mtconv_sum_membership, fig.width=1.8, fig.height=3}
+```{r Fig_mtconv_sum_membership, fig.width=1.8, fig.height=6}
 .sum <-
     .sum.subj[, .(x = median(x)), by = .(gene, membership)] %>%
     mutate(col = `gene`, row = membership, weight = x) %>%
@@ -334,7 +341,7 @@ plt <-
 
 print(plt)
 .file <- fig.dir %&% "/Fig_mtconv_sum_membership.pdf"
-.gg.save(filename = .file, plot = plt, width=1.8, height=3)
+.gg.save(filename = .file, plot = plt, width=1.8, height=6)
 ```
 
 ```{r}
@@ -342,7 +349,7 @@ print(plt)
 ```
 
 
-```{r Fig_mtconv_sum_subj_member, fig.width=5, fig.height=3}
+```{r Fig_mtconv_sum_subj_member, fig.width=5, fig.height=6}
 .dt <- copy(.sum.subj) %>%
     mutate(gene = factor(`gene`, .marker.order)) %>%
     mutate(t = subject %&% "." %&% membership)
@@ -360,7 +367,7 @@ plt <-
 
 print(plt)
 .file <- fig.dir %&% "/Fig_mtconv_sum_subj_member.pdf"
-.gg.save(filename = .file, plot = plt, width=5, height=3)
+.gg.save(filename = .file, plot = plt, width=5, height=6)
 ```
 
 
@@ -629,15 +636,15 @@ x.melt[, gene := Var1]
 
 #### Summary
 
-```{r Fig_mtreg_sum_membership, fig.width=2, fig.height=3}
+```{r Fig_mtreg_sum_membership, fig.width=2, fig.height=6}
 .sum <-
     .sum.subj[, .(x = median(x)), by = .(gene, membership)] %>%
-    mutate(row = `gene`, col = membership, weight = x) %>%
-    col.order(.marker.order, TRUE) %>%
+    mutate(col = `gene`, row = membership, weight = x) %>%
+    col.order(1:10, TRUE) %>%
     as.data.table()
 
 plt <-
-    .gg.plot(.sum, aes(col, row, fill=pmin(pmax(weight, -1.5), 1.5)))+
+    .gg.plot(.sum, aes(row, col, fill=pmin(pmax(weight, -1.5), 1.5)))+
     geom_tile(linewidth=.1, color="black") +
     scale_fill_distiller("", palette = "RdBu", direction = -1) +
     theme(legend.key.width = unit(.2,"lines")) +
@@ -646,15 +653,17 @@ plt <-
 
 print(plt)
 .file <- fig.dir %&% "/Fig_mtreg_sum_membership.pdf"
-.gg.save(filename = .file, plot = plt, width=2, height=3)
+.gg.save(filename = .file, plot = plt, width=2, height=6)
 ```
 
+```{r}
+.marker.order <- sort(unique(.sum$col))
+```
 
-```{r Fig_mtreg_sum_subj_member, fig.width=6, fig.height=3}
+```{r Fig_mtreg_sum_subj_member, fig.width=6, fig.height=6}
 .dt <- copy(.sum.subj) %>%
     mutate(gene = factor(`gene`, .marker.order)) %>%
-    mutate(t = subject %&% "." %&% membership) %>%
-    mutate(membership = factor(membership, sort(unique(.sum$col))))
+    mutate(t = subject %&% "." %&% membership)
 
 plt <-
     .gg.plot(.dt, aes(`t`, `gene`, fill=pmin(pmax(`x`, -1.5), 1.5))) +
@@ -669,7 +678,7 @@ plt <-
 
 print(plt)
 .file <- fig.dir %&% "/Fig_mtreg_sum_subj_memberhip.pdf"
-.gg.save(filename = .file, plot = plt, width=6, height=3)
+.gg.save(filename = .file, plot = plt, width=6, height=6)
 ```
 
 ```{r Fig_mtreg_gene_umap, fig.width=3, fig.height=2.5}
