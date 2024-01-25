@@ -7,6 +7,7 @@ output:
   html_document:
     toc: true
     keep_md: true
+    self_contained: true
 ---
 
 ```{r GlobOpt, include = FALSE}
@@ -36,7 +37,7 @@ plt.scatter.ct.2 <- function(.ct.show, .assign.tab, .mtx,
                              m2y = "CD45RA") {
 
     .idx <- data.table(tag = colnames(.mtx)) %>%
-        mutate(j = 1:n()) %>% 
+        mutate(j = 1:n()) %>%
         left_join(.assign.tab[as.character(celltype) %in% .ct.show]) %>%
         select(j, celltype, prob)
 
@@ -136,7 +137,7 @@ Run annotation purely based on marker proteins:
 .file <- "result/step2/prot_annot.txt.gz"
 
 if.needed(.file, {
-    
+
     .pos.markers <- .read.marker.file("marker/surface_round1_positive.txt")
     .neg.markers <- .read.marker.file("marker/surface_round1_negative.txt")
 
@@ -144,7 +145,7 @@ if.needed(.file, {
         rcpp_mmutil_annotate_columns(
             pos_labels = list(p1=.pos.markers),
             r_neg_labels = list(n1=.neg.markers),
-            mtx_file = .prot.data$mtx, 
+            mtx_file = .prot.data$mtx,
             row_file = .prot.data$row,
             col_file = .prot.data$col,
             EM_TOL = 1e-6,
@@ -174,7 +175,7 @@ colnames(prot.raw.mtx) <- readLines(.prot.data$col)
 
 .melt <-
     reshape2::melt(prot.raw.mtx) %>%
-    filter(!str_detect(`Var1`, "Hashtag")) %>% 
+    filter(!str_detect(`Var1`, "Hashtag")) %>%
     as.data.table()
 
 .sum <- .melt[,
@@ -314,11 +315,11 @@ if.needed(.file, {
     fwrite(.bbknn.umap, .file)
 })
 
-.bbknn.umap <- fread(.file) 
+.bbknn.umap <- fread(.file)
 
-.bbknn.umap <- .bbknn.umap %>% 
-    left_join(annot.dt, by = "tag") %>% 
-    filter(celltype != "CD8") %>% 
+.bbknn.umap <- .bbknn.umap %>%
+    left_join(annot.dt, by = "tag") %>%
+    filter(celltype != "CD8") %>%
     mutate(membership = as.factor(membership)) %>%
     as.data.table()
 
@@ -358,20 +359,20 @@ print(plt)
 .gg.save(filename = .file, plot = plt, width=8, height=3)
 ```
 
-However, gene expression patterns may not be sufficient. 
+However, gene expression patterns may not be sufficient.
 
 ```{r Fig_bbknn_gene_only_cluster, fig.width=5, fig.height=2}
 .ct.mem <- .bbknn.umap[, .(nc = .N), by = .(celltype, membership)]
 .ct.mem[, ntot := sum(`nc`), by = .(membership)]
 .ct.mem[, pr := `nc`/`ntot`]
 
-.df <- 
+.df <-
     .ct.mem %>%
     mutate(row = celltype, col = membership,
-           weight = logit(pmax(pmin(pr, 1-1e-2), 1e-2))) %>% 
+           weight = logit(pmax(pmin(pr, 1-1e-2), 1e-2))) %>%
     order.pair(ret.tab = TRUE)
 
-plt <- 
+plt <-
     .gg.plot(.df, aes(col, row, fill=weight, size = `nc`)) +
     xlab("Leiden clustering") +
     ylab("cell type") +
@@ -459,7 +460,7 @@ colnames(prot.raw.mtx) <- readLines(.prot.data$col)
 .names <- sapply(readLines(.prot.data$row),
                  function(s) unlist(strsplit(s, split="[_]+"))[1],
                  USE.NAMES = F) %>%
-    sapply(gsub, pattern="anti-human", replacement="", USE.NAMES = F) %>% 
+    sapply(gsub, pattern="anti-human", replacement="", USE.NAMES = F) %>%
     sapply(gsub, pattern="^[-]+", replacement="", USE.NAMES = F)
 
 rownames(prot.raw.mtx) <- .names
@@ -494,7 +495,7 @@ if.needed(.file, {
 .bbknn.umap <- fread(.file)
 
 .bbknn.umap <- .bbknn.umap %>%
-    left_join(annot.dt, by = "tag") %>% 
+    left_join(annot.dt, by = "tag") %>%
     mutate(membership = as.factor(membership)) %>%
     as.data.table()
 
@@ -538,10 +539,10 @@ print(plt)
 .ct.mem[, ntot := sum(`nc`), by = .(membership)]
 .ct.mem[, pr := `nc`/`ntot`]
 
-.df <- 
+.df <-
     .ct.mem %>%
     mutate(row = celltype, col = membership,
-           weight = logit(pmax(pmin(pr, 1-1e-2), 1e-2))) %>% 
+           weight = logit(pmax(pmin(pr, 1-1e-2), 1e-2))) %>%
     order.pair(ret.tab = TRUE)
 
 plt <-
@@ -566,7 +567,7 @@ print(plt)
 ```{r results="asis", echo=FALSE}
 .file <- "result/step2/full_bbknn_leiden.txt.gz"
 .dt <- fread(.file) %>%
-    left_join(annot.dt, by = "tag") %>% 
+    left_join(annot.dt, by = "tag") %>%
     as.data.table()
 ```
 
@@ -622,7 +623,7 @@ celltype.final[, barcode := gsub(`barcode`, pattern="-[0-9]+$", replacement="")]
 Check with Liang's supervised approach.
 
 ```{r Fig_overlap_Liang, fig.width=3.2, fig.height=2.8}
-.overlap <- 
+.overlap <-
     fread("data/PRDM1/PRDM1_SL.csv.gz") %>%
     left_join(celltype.final) %>%
     na.omit()
@@ -691,10 +692,10 @@ cat("[**DOWNLOAD:** Cell type estimation]("%&% .file %&% ")\n\n")
 .ct.mem[, ntot := sum(`nc`), by = .(membership)]
 .ct.mem[, pr := `nc`/`ntot`]
 
-.df <- 
+.df <-
     .ct.mem %>%
     mutate(row = celltype, col = membership,
-           weight = logit(pmax(pmin(pr, 1-1e-2), 1e-2))) %>% 
+           weight = logit(pmax(pmin(pr, 1-1e-2), 1e-2))) %>%
     order.pair(ret.tab = TRUE)
 
 plt <-
@@ -742,17 +743,17 @@ if.needed(.marker.data, {
 
 ```{r include = FALSE}
 .tags <- readLines("result/step2/marker/marker.cols.gz")
-    
+
 .ct <- c("mTreg","nTreg","mTconv","nTconv")
 .markers <- readLines(.marker.data$row)
 
 marker.dt <-
-    t(read.dense(.marker.data$mtx)) %>% 
+    t(read.dense(.marker.data$mtx)) %>%
     (function(x) { colnames(x) <- .markers; x }) %>%
     as.data.table() %>%
-    mutate(tag = .tags) %>% 
+    mutate(tag = .tags) %>%
     left_join(celltype.final[, .(tag, umap1, umap2, celltype)], by = "tag") %>%
-    na.omit() %>% 
+    na.omit() %>%
     as.data.table() %>%
     melt(id.vars = c("tag", "umap1", "umap2","celltype"),
          variable.name = "marker",
@@ -852,7 +853,7 @@ for(g in .markers){
     })
 
 .sample.info <-
-    readxl::read_xlsx("data/Hashing list MS Treg project.xlsx", 1) %>% 
+    readxl::read_xlsx("data/Hashing list MS Treg project.xlsx", 1) %>%
     rename(Sample = `Cell type`) %>%
     mutate(hash = gsub("#","",`hash`)) %>%
     mutate(hash = as.integer(`hash`)) %>%
@@ -865,8 +866,7 @@ for(g in .markers){
     celltype.final %>%
     mutate(batch=as.integer(batch)) %>%
     left_join(.hash.info) %>%
-    mutate(ct=factor(celltype, c("nTconv","mTconv","nTreg","mTreg"))) %>% 
-    left_join(.sample.info) %>%
+    mutate(ct=factor(celltype, c("nTconv","mTconv","nTreg","mTreg"))) %>%
     na.omit()
 ```
 
@@ -913,7 +913,6 @@ print(plt)
 .file <- fig.dir %&% "/Fig_count_stat_cd4.pdf"
 .gg.save(filename = .file, plot = plt, height=3, width=6)
 ```
-
 
 ```{r Fig_count_merged_stat_cd4, fig.height=3, fig.width=2.2}
 .stat <-
@@ -963,7 +962,7 @@ print(plt)
 .gg.save(filename = .file, plot = plt, height=3, width=2.2)
 ```
 
-## PRDM1 short vs. long
+### PRDM1 short vs. long
 
 ```{r include = FALSE}
 prdm.thm <-
@@ -980,7 +979,7 @@ prdm.dt <- fread("data/PRDM1/PRDM1_SL.csv.gz")
 .dt <-
     copy(celltype.final) %>%
     left_join(prdm.dt) %>%
-    na.omit() %>% 
+    na.omit() %>%
     as.data.table()
 
 .aes <- aes(umap1, umap2, colour=pmin(PRDM1_short, 3))
@@ -1012,3 +1011,54 @@ print(plt)
 .gg.save(filename = .file, plot = plt, width=7, height=3)
 ```
 
+### Stratify cells by batches and disease status
+
+```{r include=F}
+.dt <- celltype.final %>%
+    mutate(batch=as.integer(batch)) %>%
+    left_join(.hash.info) %>%
+    na.omit()
+```
+
+```{r Fig_bbknn_full_batch, fig.width=8, fig.height=6}
+.aes <- aes(umap1, umap2, colour=as.factor(batch))
+
+B <- length(unique(.dt$batch))
+
+plt <-
+    .gg.plot(.dt[sample(.N)], .aes) +
+    xlab("UMAP 1") + ylab("UMAP 2") +
+    ggtitle("stratified by " %&% B %&% " batches") +
+    facet_wrap( ~ "#" %&% batch, nrow=2) +
+    ggrastr::rasterise(geom_point(stroke=0, size=.7), dpi = 300) +
+    scale_color_manual(values=.more.colors(B,.palette="Set1"),
+                       guide="none")
+print(plt)
+```
+
+```{r results="asis", echo=FALSE}
+.file <- fig.dir %&% "/Fig_bbknn_full_batch.pdf"
+.gg.save(filename = .file, plot = plt, width=8, height=6)
+```
+
+
+```{r Fig_bbknn_full_disease, fig.width=5.5, fig.height=3}
+.aes <- aes(umap1, umap2, colour=disease)
+
+B <- length(unique(.dt$disease))
+
+plt <-
+    .gg.plot(.dt[sample(.N)], .aes) +
+    xlab("UMAP 1") + ylab("UMAP 2") +
+    ggtitle("stratified by " %&% B %&% " disease status") +
+    facet_wrap( ~ disease, nrow = 1) +
+    ggrastr::rasterise(geom_point(stroke=0, size=.7), dpi = 300) +
+    scale_color_brewer(guide="none", palette="Set2")
+print(plt)
+```
+
+
+```{r results="asis", echo=FALSE}
+.file <- fig.dir %&% "/Fig_bbknn_full_disease.pdf"
+.gg.save(filename = .file, plot = plt, width=5.5, height=3)
+```
