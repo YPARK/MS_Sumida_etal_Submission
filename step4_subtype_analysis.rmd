@@ -335,7 +335,7 @@ print(plt)
 
 ```{r results="asis", echo=F}
 .file <- fig.dir %&% "/Fig_mtconv_sum_membership.pdf"
-## .gg.save(filename = .file, plot = plt, width=1.8, height=6)
+.gg.save(filename = .file, plot = plt, width=1.8, height=6)
 ```
 
 ```{r}
@@ -363,7 +363,7 @@ print(plt)
 
 ```{r results="asis", echo=F}
 .file <- fig.dir %&% "/Fig_mtconv_sum_subj_member.pdf"
-## .gg.save(filename = .file, plot = plt, width=5, height=6)
+.gg.save(filename = .file, plot = plt, width=5, height=6)
 ```
 
 **NOTE** The colors are standardized `log1p` expression across genes and cells.
@@ -384,7 +384,7 @@ for(g in unique(x.melt$gene)) {
 
     print(plt)
     .file <- fig.dir %&% "/Fig_mtconv_gene_umap" %&% g %&% ".pdf"
-    ## .gg.save(filename = .file, plot = plt, width=3, height=2.5)
+    .gg.save(filename = .file, plot = plt, width=3, height=2.5)
 }
 ```
 
@@ -669,7 +669,7 @@ for(g in unique(x.melt$gene)) {
 
     print(plt)
     .file <- fig.dir %&% "/Fig_mtreg_gene_umap_" %&% g %&% ".pdf"
-    ## .gg.save(filename = .file, plot = plt, width=3, height=2.5)
+    .gg.save(filename = .file, plot = plt, width=3, height=2.5)
 }
 ```
 
@@ -707,24 +707,6 @@ print(plt)
 ```
 
 
-### Can we find new marker genes/proteins for mTreg clusters?
-
-```{r select_top_markers}
-## Actually, p-values are meaningless because we did clustering based
-## on expression and testing the significance of clustering results.
-.stat <-
-    marker.stat[p.adjust(wilcox.p) < .01 &
-                p.adjust(ttest.p) < .01 &
-                ttest.t > 0]
-
-.top.markers <-
-    .stat[order(`ttest.t`, `sd`, decreasing = T),
-          head(.SD, 10),
-          by = .(membership)]
-
-top.stat <- .stat[gene %in% .top.markers$gene]
-```
-
 ### PRDM1 vs. SGK1 (also standardized across cells)
 
 ```{r Fig_mtreg_gene_umap_other, fig.width=3, fig.height=2.5, echo = F}
@@ -745,7 +727,7 @@ for(g in unique(x.melt$gene)) {
 
     print(plt)
     .file <- fig.dir %&% "/Fig_mtreg_gene_umap" %&% g %&% ".pdf"
-    ## .gg.save(filename = .file, plot = plt, width=3, height=2.5)
+    .gg.save(filename = .file, plot = plt, width=3, height=2.5)
 }
 ```
 
@@ -791,5 +773,24 @@ print(plt)
 
 ```{r results="asis", echo = F}
 .file <- fig.dir %&% "/Fig_mtreg_gene_umap_prdm1_iso.pdf"
-## .gg.save(filename = .file, plot = plt, width=6, height=2.6)
+.gg.save(filename = .file, plot = plt, width=6, height=2.6)
 ```
+
+### Can we find new marker genes/proteins for mTreg clusters?
+
+```{r select_top_markers}
+## Actually, p-values are meaningless because we did clustering based
+## on expression and testing the significance of clustering results.
+.stat <-
+    marker.stat[p.adjust(wilcox.p) < .01 &
+                p.adjust(ttest.p) < .01 &
+                ttest.t > 0]
+
+.top.markers <-
+    .stat[order(`ttest.t`, `sd`, decreasing = T),
+          head(.SD, 10),
+          by = .(membership)]
+
+top.stat <- .stat[gene %in% .top.markers$gene]
+```
+
