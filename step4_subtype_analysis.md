@@ -124,7 +124,7 @@ take.marker.stats <- function(x, dict){
       "GSDMD", "HDAC1", "GIMAP4", "APOBEC3G", "CD2", "CD28", "CD6",
       "CDKN2A", "CORO1A", "FAS", "FLI1", "GPR25", "MT2A", "KEAP1",
       "IL12RB", "SIRT2", "TNFRSF14", "TRAF3IP3", "IRF2", "PSPH",
-      "CD278", "B2M", "RPS26", "MAP1S",
+      "CD278", "B2M", "RPS26", "MAP1S", "SGK1", "BACH2",
       "HLA-C", "HLA-B", "HLA-E", "HLA-DR", "HLA-DRA", "HLA-DRB1",
       "S1PR4", "KLF2", "SATB1", "TSC22D3", "IL2RA", "CD25") %>%
     unique
@@ -502,241 +502,249 @@ for(g in unique(x.melt$gene)) {
 
 ![](Fig/STEP4/Fig_mtconv_gene_umap-32.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapCCR6.pdf)
+[PDF](Fig/STEP4//Fig_mtconv_gene_umapBACH2.pdf)
 
 ![](Fig/STEP4/Fig_mtconv_gene_umap-33.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapGZMK.pdf)
+[PDF](Fig/STEP4//Fig_mtconv_gene_umapCCR6.pdf)
 
 ![](Fig/STEP4/Fig_mtconv_gene_umap-34.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapFOXP1.pdf)
+[PDF](Fig/STEP4//Fig_mtconv_gene_umapGZMK.pdf)
 
 ![](Fig/STEP4/Fig_mtconv_gene_umap-35.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapHDAC1.pdf)
+[PDF](Fig/STEP4//Fig_mtconv_gene_umapFOXP1.pdf)
 
 ![](Fig/STEP4/Fig_mtconv_gene_umap-36.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapCD2.pdf)
+[PDF](Fig/STEP4//Fig_mtconv_gene_umapHDAC1.pdf)
 
 ![](Fig/STEP4/Fig_mtconv_gene_umap-37.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapMT2A.pdf)
+[PDF](Fig/STEP4//Fig_mtconv_gene_umapCD2.pdf)
 
 ![](Fig/STEP4/Fig_mtconv_gene_umap-38.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapS1PR4.pdf)
+[PDF](Fig/STEP4//Fig_mtconv_gene_umapSGK1.pdf)
 
 ![](Fig/STEP4/Fig_mtconv_gene_umap-39.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapCCR7.pdf)
+[PDF](Fig/STEP4//Fig_mtconv_gene_umapMT2A.pdf)
 
 ![](Fig/STEP4/Fig_mtconv_gene_umap-40.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapNR1D1.pdf)
+[PDF](Fig/STEP4//Fig_mtconv_gene_umapS1PR4.pdf)
 
 ![](Fig/STEP4/Fig_mtconv_gene_umap-41.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapKLF2.pdf)
+[PDF](Fig/STEP4//Fig_mtconv_gene_umapCCR7.pdf)
 
 ![](Fig/STEP4/Fig_mtconv_gene_umap-42.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapMAP1S.pdf)
+[PDF](Fig/STEP4//Fig_mtconv_gene_umapNR1D1.pdf)
 
 ![](Fig/STEP4/Fig_mtconv_gene_umap-43.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapGIMAP4.pdf)
+[PDF](Fig/STEP4//Fig_mtconv_gene_umapKLF2.pdf)
 
 ![](Fig/STEP4/Fig_mtconv_gene_umap-44.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapIL2RA.pdf)
+[PDF](Fig/STEP4//Fig_mtconv_gene_umapMAP1S.pdf)
 
 ![](Fig/STEP4/Fig_mtconv_gene_umap-45.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapHAVCR2.pdf)
+[PDF](Fig/STEP4//Fig_mtconv_gene_umapGIMAP4.pdf)
 
 ![](Fig/STEP4/Fig_mtconv_gene_umap-46.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapITM2C.pdf)
+[PDF](Fig/STEP4//Fig_mtconv_gene_umapIL2RA.pdf)
 
 ![](Fig/STEP4/Fig_mtconv_gene_umap-47.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapMYC.pdf)
+[PDF](Fig/STEP4//Fig_mtconv_gene_umapHAVCR2.pdf)
 
 ![](Fig/STEP4/Fig_mtconv_gene_umap-48.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapLEF1.pdf)
+[PDF](Fig/STEP4//Fig_mtconv_gene_umapITM2C.pdf)
 
 ![](Fig/STEP4/Fig_mtconv_gene_umap-49.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapC1orf162.pdf)
+[PDF](Fig/STEP4//Fig_mtconv_gene_umapMYC.pdf)
 
 ![](Fig/STEP4/Fig_mtconv_gene_umap-50.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapRORC.pdf)
+[PDF](Fig/STEP4//Fig_mtconv_gene_umapLEF1.pdf)
 
 ![](Fig/STEP4/Fig_mtconv_gene_umap-51.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapPSPH.pdf)
+[PDF](Fig/STEP4//Fig_mtconv_gene_umapC1orf162.pdf)
 
 ![](Fig/STEP4/Fig_mtconv_gene_umap-52.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapCDKN2A.pdf)
+[PDF](Fig/STEP4//Fig_mtconv_gene_umapRORC.pdf)
 
 ![](Fig/STEP4/Fig_mtconv_gene_umap-53.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapFLI1.pdf)
+[PDF](Fig/STEP4//Fig_mtconv_gene_umapPSPH.pdf)
 
 ![](Fig/STEP4/Fig_mtconv_gene_umap-54.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapBATF.pdf)
+[PDF](Fig/STEP4//Fig_mtconv_gene_umapCDKN2A.pdf)
 
 ![](Fig/STEP4/Fig_mtconv_gene_umap-55.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapTSC22D3.pdf)
+[PDF](Fig/STEP4//Fig_mtconv_gene_umapFLI1.pdf)
 
 ![](Fig/STEP4/Fig_mtconv_gene_umap-56.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapTNFRSF14.pdf)
+[PDF](Fig/STEP4//Fig_mtconv_gene_umapBATF.pdf)
 
 ![](Fig/STEP4/Fig_mtconv_gene_umap-57.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapIFNGR2.pdf)
+[PDF](Fig/STEP4//Fig_mtconv_gene_umapTSC22D3.pdf)
 
 ![](Fig/STEP4/Fig_mtconv_gene_umap-58.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapCXCR5.pdf)
+[PDF](Fig/STEP4//Fig_mtconv_gene_umapTNFRSF14.pdf)
 
 ![](Fig/STEP4/Fig_mtconv_gene_umap-59.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapLMNA.pdf)
+[PDF](Fig/STEP4//Fig_mtconv_gene_umapIFNGR2.pdf)
 
 ![](Fig/STEP4/Fig_mtconv_gene_umap-60.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapGBP4.pdf)
+[PDF](Fig/STEP4//Fig_mtconv_gene_umapCXCR5.pdf)
 
 ![](Fig/STEP4/Fig_mtconv_gene_umap-61.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapCTLA4.pdf)
+[PDF](Fig/STEP4//Fig_mtconv_gene_umapLMNA.pdf)
 
 ![](Fig/STEP4/Fig_mtconv_gene_umap-62.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapHPGD.pdf)
+[PDF](Fig/STEP4//Fig_mtconv_gene_umapGBP4.pdf)
 
 ![](Fig/STEP4/Fig_mtconv_gene_umap-63.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapCDCA7L.pdf)
+[PDF](Fig/STEP4//Fig_mtconv_gene_umapCTLA4.pdf)
 
 ![](Fig/STEP4/Fig_mtconv_gene_umap-64.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapABCA1.pdf)
+[PDF](Fig/STEP4//Fig_mtconv_gene_umapHPGD.pdf)
 
 ![](Fig/STEP4/Fig_mtconv_gene_umap-65.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapB2M.pdf)
+[PDF](Fig/STEP4//Fig_mtconv_gene_umapCDCA7L.pdf)
 
 ![](Fig/STEP4/Fig_mtconv_gene_umap-66.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapIRF2.pdf)
+[PDF](Fig/STEP4//Fig_mtconv_gene_umapABCA1.pdf)
 
 ![](Fig/STEP4/Fig_mtconv_gene_umap-67.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapIL7R.pdf)
+[PDF](Fig/STEP4//Fig_mtconv_gene_umapB2M.pdf)
 
 ![](Fig/STEP4/Fig_mtconv_gene_umap-68.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapGPR25.pdf)
+[PDF](Fig/STEP4//Fig_mtconv_gene_umapIRF2.pdf)
 
 ![](Fig/STEP4/Fig_mtconv_gene_umap-69.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapISG20.pdf)
+[PDF](Fig/STEP4//Fig_mtconv_gene_umapIL7R.pdf)
 
 ![](Fig/STEP4/Fig_mtconv_gene_umap-70.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapJUN.pdf)
+[PDF](Fig/STEP4//Fig_mtconv_gene_umapGPR25.pdf)
 
 ![](Fig/STEP4/Fig_mtconv_gene_umap-71.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapCD28.pdf)
+[PDF](Fig/STEP4//Fig_mtconv_gene_umapISG20.pdf)
 
 ![](Fig/STEP4/Fig_mtconv_gene_umap-72.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapCCR8.pdf)
+[PDF](Fig/STEP4//Fig_mtconv_gene_umapJUN.pdf)
 
 ![](Fig/STEP4/Fig_mtconv_gene_umap-73.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapTIGIT.pdf)
+[PDF](Fig/STEP4//Fig_mtconv_gene_umapCD28.pdf)
 
 ![](Fig/STEP4/Fig_mtconv_gene_umap-74.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapSATB1.pdf)
+[PDF](Fig/STEP4//Fig_mtconv_gene_umapCCR8.pdf)
 
 ![](Fig/STEP4/Fig_mtconv_gene_umap-75.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapANXA2.pdf)
+[PDF](Fig/STEP4//Fig_mtconv_gene_umapTIGIT.pdf)
 
 ![](Fig/STEP4/Fig_mtconv_gene_umap-76.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapCCR4.pdf)
+[PDF](Fig/STEP4//Fig_mtconv_gene_umapSATB1.pdf)
 
 ![](Fig/STEP4/Fig_mtconv_gene_umap-77.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapCXCR3.pdf)
+[PDF](Fig/STEP4//Fig_mtconv_gene_umapANXA2.pdf)
 
 ![](Fig/STEP4/Fig_mtconv_gene_umap-78.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapTNFRSF4.pdf)
+[PDF](Fig/STEP4//Fig_mtconv_gene_umapCCR4.pdf)
 
 ![](Fig/STEP4/Fig_mtconv_gene_umap-79.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapPDCD1.pdf)
+[PDF](Fig/STEP4//Fig_mtconv_gene_umapCXCR3.pdf)
 
 ![](Fig/STEP4/Fig_mtconv_gene_umap-80.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapSELL.pdf)
+[PDF](Fig/STEP4//Fig_mtconv_gene_umapTNFRSF4.pdf)
 
 ![](Fig/STEP4/Fig_mtconv_gene_umap-81.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapFHIT.pdf)
+[PDF](Fig/STEP4//Fig_mtconv_gene_umapPDCD1.pdf)
 
 ![](Fig/STEP4/Fig_mtconv_gene_umap-82.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapHLA-DRB1.pdf)
+[PDF](Fig/STEP4//Fig_mtconv_gene_umapSELL.pdf)
 
 ![](Fig/STEP4/Fig_mtconv_gene_umap-83.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapS100A4.pdf)
+[PDF](Fig/STEP4//Fig_mtconv_gene_umapFHIT.pdf)
 
 ![](Fig/STEP4/Fig_mtconv_gene_umap-84.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapRPS26.pdf)
+[PDF](Fig/STEP4//Fig_mtconv_gene_umapHLA-DRB1.pdf)
 
 ![](Fig/STEP4/Fig_mtconv_gene_umap-85.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapHLA-DRA.pdf)
+[PDF](Fig/STEP4//Fig_mtconv_gene_umapS100A4.pdf)
 
 ![](Fig/STEP4/Fig_mtconv_gene_umap-86.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapHLA-C.pdf)
+[PDF](Fig/STEP4//Fig_mtconv_gene_umapRPS26.pdf)
 
 ![](Fig/STEP4/Fig_mtconv_gene_umap-87.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapHLA-E.pdf)
+[PDF](Fig/STEP4//Fig_mtconv_gene_umapHLA-DRA.pdf)
 
 ![](Fig/STEP4/Fig_mtconv_gene_umap-88.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapHLA-B.pdf)
+[PDF](Fig/STEP4//Fig_mtconv_gene_umapHLA-C.pdf)
 
 ![](Fig/STEP4/Fig_mtconv_gene_umap-89.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapAPOBEC3G.pdf)
+[PDF](Fig/STEP4//Fig_mtconv_gene_umapHLA-E.pdf)
 
 ![](Fig/STEP4/Fig_mtconv_gene_umap-90.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapMALAT1.pdf)
+[PDF](Fig/STEP4//Fig_mtconv_gene_umapHLA-B.pdf)
 
 ![](Fig/STEP4/Fig_mtconv_gene_umap-91.png)<!-- -->
+
+[PDF](Fig/STEP4//Fig_mtconv_gene_umapAPOBEC3G.pdf)
+
+![](Fig/STEP4/Fig_mtconv_gene_umap-92.png)<!-- -->
+
+[PDF](Fig/STEP4//Fig_mtconv_gene_umapMALAT1.pdf)
+
+![](Fig/STEP4/Fig_mtconv_gene_umap-93.png)<!-- -->
 
 [PDF](Fig/STEP4//Fig_mtconv_gene_umapHLA-DR.pdf)
 
@@ -1151,241 +1159,249 @@ for(g in unique(x.melt$gene)) {
 
 ![](Fig/STEP4/Fig_mtreg_gene_umap-32.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtreg_gene_umap_CCR6.pdf)
+[PDF](Fig/STEP4//Fig_mtreg_gene_umap_BACH2.pdf)
 
 ![](Fig/STEP4/Fig_mtreg_gene_umap-33.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtreg_gene_umap_GZMK.pdf)
+[PDF](Fig/STEP4//Fig_mtreg_gene_umap_CCR6.pdf)
 
 ![](Fig/STEP4/Fig_mtreg_gene_umap-34.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtreg_gene_umap_FOXP1.pdf)
+[PDF](Fig/STEP4//Fig_mtreg_gene_umap_GZMK.pdf)
 
 ![](Fig/STEP4/Fig_mtreg_gene_umap-35.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtreg_gene_umap_HDAC1.pdf)
+[PDF](Fig/STEP4//Fig_mtreg_gene_umap_FOXP1.pdf)
 
 ![](Fig/STEP4/Fig_mtreg_gene_umap-36.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtreg_gene_umap_CD2.pdf)
+[PDF](Fig/STEP4//Fig_mtreg_gene_umap_HDAC1.pdf)
 
 ![](Fig/STEP4/Fig_mtreg_gene_umap-37.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtreg_gene_umap_MT2A.pdf)
+[PDF](Fig/STEP4//Fig_mtreg_gene_umap_CD2.pdf)
 
 ![](Fig/STEP4/Fig_mtreg_gene_umap-38.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtreg_gene_umap_S1PR4.pdf)
+[PDF](Fig/STEP4//Fig_mtreg_gene_umap_SGK1.pdf)
 
 ![](Fig/STEP4/Fig_mtreg_gene_umap-39.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtreg_gene_umap_CCR7.pdf)
+[PDF](Fig/STEP4//Fig_mtreg_gene_umap_MT2A.pdf)
 
 ![](Fig/STEP4/Fig_mtreg_gene_umap-40.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtreg_gene_umap_NR1D1.pdf)
+[PDF](Fig/STEP4//Fig_mtreg_gene_umap_S1PR4.pdf)
 
 ![](Fig/STEP4/Fig_mtreg_gene_umap-41.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtreg_gene_umap_KLF2.pdf)
+[PDF](Fig/STEP4//Fig_mtreg_gene_umap_CCR7.pdf)
 
 ![](Fig/STEP4/Fig_mtreg_gene_umap-42.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtreg_gene_umap_MAP1S.pdf)
+[PDF](Fig/STEP4//Fig_mtreg_gene_umap_NR1D1.pdf)
 
 ![](Fig/STEP4/Fig_mtreg_gene_umap-43.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtreg_gene_umap_GIMAP4.pdf)
+[PDF](Fig/STEP4//Fig_mtreg_gene_umap_KLF2.pdf)
 
 ![](Fig/STEP4/Fig_mtreg_gene_umap-44.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtreg_gene_umap_IL2RA.pdf)
+[PDF](Fig/STEP4//Fig_mtreg_gene_umap_MAP1S.pdf)
 
 ![](Fig/STEP4/Fig_mtreg_gene_umap-45.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtreg_gene_umap_HAVCR2.pdf)
+[PDF](Fig/STEP4//Fig_mtreg_gene_umap_GIMAP4.pdf)
 
 ![](Fig/STEP4/Fig_mtreg_gene_umap-46.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtreg_gene_umap_ITM2C.pdf)
+[PDF](Fig/STEP4//Fig_mtreg_gene_umap_IL2RA.pdf)
 
 ![](Fig/STEP4/Fig_mtreg_gene_umap-47.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtreg_gene_umap_MYC.pdf)
+[PDF](Fig/STEP4//Fig_mtreg_gene_umap_HAVCR2.pdf)
 
 ![](Fig/STEP4/Fig_mtreg_gene_umap-48.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtreg_gene_umap_LEF1.pdf)
+[PDF](Fig/STEP4//Fig_mtreg_gene_umap_ITM2C.pdf)
 
 ![](Fig/STEP4/Fig_mtreg_gene_umap-49.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtreg_gene_umap_C1orf162.pdf)
+[PDF](Fig/STEP4//Fig_mtreg_gene_umap_MYC.pdf)
 
 ![](Fig/STEP4/Fig_mtreg_gene_umap-50.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtreg_gene_umap_RORC.pdf)
+[PDF](Fig/STEP4//Fig_mtreg_gene_umap_LEF1.pdf)
 
 ![](Fig/STEP4/Fig_mtreg_gene_umap-51.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtreg_gene_umap_PSPH.pdf)
+[PDF](Fig/STEP4//Fig_mtreg_gene_umap_C1orf162.pdf)
 
 ![](Fig/STEP4/Fig_mtreg_gene_umap-52.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtreg_gene_umap_CDKN2A.pdf)
+[PDF](Fig/STEP4//Fig_mtreg_gene_umap_RORC.pdf)
 
 ![](Fig/STEP4/Fig_mtreg_gene_umap-53.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtreg_gene_umap_FLI1.pdf)
+[PDF](Fig/STEP4//Fig_mtreg_gene_umap_PSPH.pdf)
 
 ![](Fig/STEP4/Fig_mtreg_gene_umap-54.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtreg_gene_umap_BATF.pdf)
+[PDF](Fig/STEP4//Fig_mtreg_gene_umap_CDKN2A.pdf)
 
 ![](Fig/STEP4/Fig_mtreg_gene_umap-55.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtreg_gene_umap_TSC22D3.pdf)
+[PDF](Fig/STEP4//Fig_mtreg_gene_umap_FLI1.pdf)
 
 ![](Fig/STEP4/Fig_mtreg_gene_umap-56.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtreg_gene_umap_TNFRSF14.pdf)
+[PDF](Fig/STEP4//Fig_mtreg_gene_umap_BATF.pdf)
 
 ![](Fig/STEP4/Fig_mtreg_gene_umap-57.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtreg_gene_umap_IFNGR2.pdf)
+[PDF](Fig/STEP4//Fig_mtreg_gene_umap_TSC22D3.pdf)
 
 ![](Fig/STEP4/Fig_mtreg_gene_umap-58.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtreg_gene_umap_CXCR5.pdf)
+[PDF](Fig/STEP4//Fig_mtreg_gene_umap_TNFRSF14.pdf)
 
 ![](Fig/STEP4/Fig_mtreg_gene_umap-59.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtreg_gene_umap_LMNA.pdf)
+[PDF](Fig/STEP4//Fig_mtreg_gene_umap_IFNGR2.pdf)
 
 ![](Fig/STEP4/Fig_mtreg_gene_umap-60.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtreg_gene_umap_GBP4.pdf)
+[PDF](Fig/STEP4//Fig_mtreg_gene_umap_CXCR5.pdf)
 
 ![](Fig/STEP4/Fig_mtreg_gene_umap-61.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtreg_gene_umap_CTLA4.pdf)
+[PDF](Fig/STEP4//Fig_mtreg_gene_umap_LMNA.pdf)
 
 ![](Fig/STEP4/Fig_mtreg_gene_umap-62.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtreg_gene_umap_HPGD.pdf)
+[PDF](Fig/STEP4//Fig_mtreg_gene_umap_GBP4.pdf)
 
 ![](Fig/STEP4/Fig_mtreg_gene_umap-63.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtreg_gene_umap_CDCA7L.pdf)
+[PDF](Fig/STEP4//Fig_mtreg_gene_umap_CTLA4.pdf)
 
 ![](Fig/STEP4/Fig_mtreg_gene_umap-64.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtreg_gene_umap_ABCA1.pdf)
+[PDF](Fig/STEP4//Fig_mtreg_gene_umap_HPGD.pdf)
 
 ![](Fig/STEP4/Fig_mtreg_gene_umap-65.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtreg_gene_umap_B2M.pdf)
+[PDF](Fig/STEP4//Fig_mtreg_gene_umap_CDCA7L.pdf)
 
 ![](Fig/STEP4/Fig_mtreg_gene_umap-66.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtreg_gene_umap_IRF2.pdf)
+[PDF](Fig/STEP4//Fig_mtreg_gene_umap_ABCA1.pdf)
 
 ![](Fig/STEP4/Fig_mtreg_gene_umap-67.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtreg_gene_umap_IL7R.pdf)
+[PDF](Fig/STEP4//Fig_mtreg_gene_umap_B2M.pdf)
 
 ![](Fig/STEP4/Fig_mtreg_gene_umap-68.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtreg_gene_umap_GPR25.pdf)
+[PDF](Fig/STEP4//Fig_mtreg_gene_umap_IRF2.pdf)
 
 ![](Fig/STEP4/Fig_mtreg_gene_umap-69.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtreg_gene_umap_ISG20.pdf)
+[PDF](Fig/STEP4//Fig_mtreg_gene_umap_IL7R.pdf)
 
 ![](Fig/STEP4/Fig_mtreg_gene_umap-70.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtreg_gene_umap_JUN.pdf)
+[PDF](Fig/STEP4//Fig_mtreg_gene_umap_GPR25.pdf)
 
 ![](Fig/STEP4/Fig_mtreg_gene_umap-71.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtreg_gene_umap_CD28.pdf)
+[PDF](Fig/STEP4//Fig_mtreg_gene_umap_ISG20.pdf)
 
 ![](Fig/STEP4/Fig_mtreg_gene_umap-72.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtreg_gene_umap_CCR8.pdf)
+[PDF](Fig/STEP4//Fig_mtreg_gene_umap_JUN.pdf)
 
 ![](Fig/STEP4/Fig_mtreg_gene_umap-73.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtreg_gene_umap_TIGIT.pdf)
+[PDF](Fig/STEP4//Fig_mtreg_gene_umap_CD28.pdf)
 
 ![](Fig/STEP4/Fig_mtreg_gene_umap-74.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtreg_gene_umap_SATB1.pdf)
+[PDF](Fig/STEP4//Fig_mtreg_gene_umap_CCR8.pdf)
 
 ![](Fig/STEP4/Fig_mtreg_gene_umap-75.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtreg_gene_umap_ANXA2.pdf)
+[PDF](Fig/STEP4//Fig_mtreg_gene_umap_TIGIT.pdf)
 
 ![](Fig/STEP4/Fig_mtreg_gene_umap-76.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtreg_gene_umap_CCR4.pdf)
+[PDF](Fig/STEP4//Fig_mtreg_gene_umap_SATB1.pdf)
 
 ![](Fig/STEP4/Fig_mtreg_gene_umap-77.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtreg_gene_umap_CXCR3.pdf)
+[PDF](Fig/STEP4//Fig_mtreg_gene_umap_ANXA2.pdf)
 
 ![](Fig/STEP4/Fig_mtreg_gene_umap-78.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtreg_gene_umap_TNFRSF4.pdf)
+[PDF](Fig/STEP4//Fig_mtreg_gene_umap_CCR4.pdf)
 
 ![](Fig/STEP4/Fig_mtreg_gene_umap-79.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtreg_gene_umap_PDCD1.pdf)
+[PDF](Fig/STEP4//Fig_mtreg_gene_umap_CXCR3.pdf)
 
 ![](Fig/STEP4/Fig_mtreg_gene_umap-80.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtreg_gene_umap_SELL.pdf)
+[PDF](Fig/STEP4//Fig_mtreg_gene_umap_TNFRSF4.pdf)
 
 ![](Fig/STEP4/Fig_mtreg_gene_umap-81.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtreg_gene_umap_FHIT.pdf)
+[PDF](Fig/STEP4//Fig_mtreg_gene_umap_PDCD1.pdf)
 
 ![](Fig/STEP4/Fig_mtreg_gene_umap-82.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtreg_gene_umap_HLA-DRB1.pdf)
+[PDF](Fig/STEP4//Fig_mtreg_gene_umap_SELL.pdf)
 
 ![](Fig/STEP4/Fig_mtreg_gene_umap-83.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtreg_gene_umap_S100A4.pdf)
+[PDF](Fig/STEP4//Fig_mtreg_gene_umap_FHIT.pdf)
 
 ![](Fig/STEP4/Fig_mtreg_gene_umap-84.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtreg_gene_umap_RPS26.pdf)
+[PDF](Fig/STEP4//Fig_mtreg_gene_umap_HLA-DRB1.pdf)
 
 ![](Fig/STEP4/Fig_mtreg_gene_umap-85.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtreg_gene_umap_HLA-DRA.pdf)
+[PDF](Fig/STEP4//Fig_mtreg_gene_umap_S100A4.pdf)
 
 ![](Fig/STEP4/Fig_mtreg_gene_umap-86.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtreg_gene_umap_HLA-C.pdf)
+[PDF](Fig/STEP4//Fig_mtreg_gene_umap_RPS26.pdf)
 
 ![](Fig/STEP4/Fig_mtreg_gene_umap-87.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtreg_gene_umap_HLA-E.pdf)
+[PDF](Fig/STEP4//Fig_mtreg_gene_umap_HLA-DRA.pdf)
 
 ![](Fig/STEP4/Fig_mtreg_gene_umap-88.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtreg_gene_umap_HLA-B.pdf)
+[PDF](Fig/STEP4//Fig_mtreg_gene_umap_HLA-C.pdf)
 
 ![](Fig/STEP4/Fig_mtreg_gene_umap-89.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtreg_gene_umap_APOBEC3G.pdf)
+[PDF](Fig/STEP4//Fig_mtreg_gene_umap_HLA-E.pdf)
 
 ![](Fig/STEP4/Fig_mtreg_gene_umap-90.png)<!-- -->
 
-[PDF](Fig/STEP4//Fig_mtreg_gene_umap_MALAT1.pdf)
+[PDF](Fig/STEP4//Fig_mtreg_gene_umap_HLA-B.pdf)
 
 ![](Fig/STEP4/Fig_mtreg_gene_umap-91.png)<!-- -->
+
+[PDF](Fig/STEP4//Fig_mtreg_gene_umap_APOBEC3G.pdf)
+
+![](Fig/STEP4/Fig_mtreg_gene_umap-92.png)<!-- -->
+
+[PDF](Fig/STEP4//Fig_mtreg_gene_umap_MALAT1.pdf)
+
+![](Fig/STEP4/Fig_mtreg_gene_umap-93.png)<!-- -->
 
 [PDF](Fig/STEP4//Fig_mtreg_gene_umap_HLA-DR.pdf)
 

@@ -137,7 +137,7 @@ take.marker.stats <- function(x, dict){
       "GSDMD", "HDAC1", "GIMAP4", "APOBEC3G", "CD2", "CD28", "CD6",
       "CDKN2A", "CORO1A", "FAS", "FLI1", "GPR25", "MT2A", "KEAP1",
       "IL12RB", "SIRT2", "TNFRSF14", "TRAF3IP3", "IRF2", "PSPH",
-      "CD278", "B2M", "RPS26", "MAP1S",
+      "CD278", "B2M", "RPS26", "MAP1S", "SGK1", "BACH2",
       "HLA-C", "HLA-B", "HLA-E", "HLA-DR", "HLA-DRA", "HLA-DRB1",
       "S1PR4", "KLF2", "SATB1", "TSC22D3", "IL2RA", "CD25") %>%
     unique
