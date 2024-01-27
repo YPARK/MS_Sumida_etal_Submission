@@ -42,7 +42,7 @@ parse.gene <- function(x){
     return(x)
 }
 
-bbknn.x <- function(.data, .bbknn, .bbknn.umap) {
+bbknn.x <- function(.data, .bbknn, .bbknn.umap, .subset = NULL) {
     .cols <-
         fread(.data$col, header=F, col.names = "tag") %>%
         parse.tag() %>%
@@ -55,21 +55,36 @@ bbknn.x <- function(.data, .bbknn, .bbknn.umap) {
         fread(.data$row, col.names="gene", header=F) %>%
         parse.gene()
 
-    uu <- .bbknn$U[.rows$i, , drop = F]
-    rownames(uu) <- .rows$hgnc_symbol
+    if(!is.null(.subset)){
+        .rows <- .rows %>%
+            filter(hgnc_symbol %in% .subset |
+                   ensembl_gene_id %in% .subset)
+    }
+
     vv <- .bbknn$factors.adjusted[.cols$j, , drop = F]
-    rownames(vv) <- .cols$tag
-    X <- sweep(uu, 2, .bbknn$D, `*`) %*% t(vv)
+    X <- sweep(.bbknn$U, 2, .bbknn$D, `*`) %*% t(vv)
+
+    ## double scale
+    X <- apply(X, 2, scale)
+    X.t <- apply(t(X), 2, scale)
+    X <- t(X.t)
+
+    ret <- X[.rows$i, , drop = F]
+    rownames(ret) <- .rows$hgnc_symbol
+    colnames(ret) <- .cols$tag
+    return(ret)
 }
 
-bbknn.x.melt <- function(.data, .bbknn, .bbknn.umap) {
-    X <- bbknn.x(.data, .bbknn, .bbknn.umap)
+bbknn.x.melt <- function(.data, .bbknn, .bbknn.umap, .subset = NULL) {
+
+    X <- bbknn.x(.data, .bbknn, .bbknn.umap, .subset)
     ret <- reshape2::melt(X) %>% as.data.table()
-    ret[, x := scale(value), by = .(Var2)]
     ret[, tag := Var2]
     ret[, gene := Var1]
     ret[, Var1 := NULL]
     ret[, Var2 := NULL]
+    ret[, x := value]
+    ret[, value := NULL]
     return(ret)
 }
 
@@ -119,6 +134,11 @@ take.marker.stats <- function(x, dict){
       "FOXP3", "FOXP1", "PDCD1", "CD279", "CTLA4", "LAG3",
       "HAVCR2", "CD366", "KLRB1", "FOSL2", "S100A4", "GMAP7",
       "JUN", "IL7R", "MYC", "IL32", "ISG20", "MALAT1",
+      "GSDMD", "HDAC1", "GIMAP4", "APOBEC3G", "CD2", "CD28", "CD6",
+      "CDKN2A", "CORO1A", "FAS", "FLI1", "GPR25", "MT2A", "KEAP1",
+      "IL12RB", "SIRT2", "TNFRSF14", "TRAF3IP3", "IRF2", "PSPH",
+      "CD278", "B2M", "RPS26", "MAP1S",
+      "HLA-C", "HLA-B", "HLA-E", "HLA-DR", "HLA-DRA", "HLA-DRB1",
       "S1PR4", "KLF2", "SATB1", "TSC22D3", "IL2RA", "CD25") %>%
     unique
 ```
@@ -180,7 +200,7 @@ if.needed(.file, {
 
     .batches <-
         fread(.data$col, col.names="tag", header=F) %>%
-        parse.tag() %>% 
+        parse.tag() %>%
         left_join(.hash.info)
 
     bb <- .batches %>%
@@ -271,7 +291,6 @@ print(plt)
 .gg.save(filename = .file, plot = plt, width=3, height=3)
 ```
 
-
 ```{r Fig_bbknn_mtconv_sub, fig.width=3, fig.height=3}
 .cols <- .more.colors(10, nc.pal=7, .palette="Set1")
 plt <-
@@ -286,37 +305,10 @@ print(plt)
 ```
 
 ```{r select_mtconv_marker_genes}
-.rows <- fread(.data$row, col.names="gene", header=F)
-.rows[, c("ensembl_gene_id","hgnc_symbol") := tstrsplit(`gene`,split="_")]
-.rows[, r := 1:.N]
-
-.cols <- fread(.data$col, col.names="tag", header=F) %>%
-    mutate(c = 1:n()) %>%
-    left_join(.cells) %>%
-    na.omit() %>%
-    as.data.table()
+x.melt <- bbknn.x.melt(.data, .bbknn, .bbknn.umap, .markers)
 ```
 
-
-```{r}
-rr <- .rows[hgnc_symbol %in% .markers]$r
-
-uu <- .bbknn$U[rr, , drop = F]
-rownames(uu) <- .rows[hgnc_symbol %in% .markers]$hgnc_symbol
-
-cc <- .cols$c
-vv <- .bbknn$factors.adjusted[cc, , drop = F]
-rownames(vv) <- .cols$tag
-
-X <- sweep(uu, 2, .bbknn$D, `*`) %*% t(vv)
-x.melt <- reshape2::melt(X) %>% as.data.table()
-x.melt[, x := scale(value), by = .(Var2)]
-x.melt[, x := scale(x), by = .(Var1)]
-x.melt[, tag := Var2]
-x.melt[, gene := Var1]
-```
-
-
+#### Summary heatmap
 
 ```{r}
 .dt <- x.melt %>% left_join(.cells)
@@ -324,7 +316,7 @@ x.melt[, gene := Var1]
 .sum.subj[, x := scale(x), by = .(gene)]
 ```
 
-```{r Fig_mtconv_sum_membership, fig.width=1.8, fig.height=6}
+```{r Fig_mtconv_sum_membership, fig.width=1.8, fig.height=6.5}
 .sum <-
     .sum.subj[, .(x = median(x)), by = .(gene, membership)] %>%
     mutate(col = `gene`, row = membership, weight = x) %>%
@@ -338,18 +330,19 @@ plt <-
     theme(legend.key.width = unit(.2,"lines")) +
     theme(legend.key.height = unit(.5,"lines")) +
     xlab("cell clusters") + ylab("features")
-
 print(plt)
+```
+
+```{r results="asis", echo=F}
 .file <- fig.dir %&% "/Fig_mtconv_sum_membership.pdf"
-.gg.save(filename = .file, plot = plt, width=1.8, height=6)
+## .gg.save(filename = .file, plot = plt, width=1.8, height=6)
 ```
 
 ```{r}
 .marker.order <- sort(unique(.sum$col))
 ```
 
-
-```{r Fig_mtconv_sum_subj_member, fig.width=5, fig.height=6}
+```{r Fig_mtconv_sum_subj_member, fig.width=5, fig.height=6.5}
 .dt <- copy(.sum.subj) %>%
     mutate(gene = factor(`gene`, .marker.order)) %>%
     mutate(t = subject %&% "." %&% membership)
@@ -366,21 +359,24 @@ plt <-
     xlab("subjects") + ylab("features")
 
 print(plt)
-.file <- fig.dir %&% "/Fig_mtconv_sum_subj_member.pdf"
-.gg.save(filename = .file, plot = plt, width=5, height=6)
 ```
 
+```{r results="asis", echo=F}
+.file <- fig.dir %&% "/Fig_mtconv_sum_subj_member.pdf"
+## .gg.save(filename = .file, plot = plt, width=5, height=6)
+```
 
+**NOTE** The colors are standardized `log1p` expression across genes and cells.
 
 ```{r Fig_mtconv_gene_umap, fig.width=3, fig.height=2.5}
 for(g in unique(x.melt$gene)) {
     .dt <- left_join(x.melt[gene == g], .cells)
-    .aes <- aes(umap1, umap2, color=pmin(pmax(x, -2.5), 2.5))
+    .aes <- aes(umap1, umap2, color=pmax(pmin(x, 3), -3))
 
     plt <-
         .gg.plot(.dt[order(`x`)], .aes) +
         xlab("UMAP1") + ylab("UMAP2") +
-        geom_point(stroke = 0, size=.7) +
+        ggrastr::rasterise(geom_point(stroke = 0, size=.7), dpi=300) +
         theme(legend.key.width = unit(.2,"lines")) +
         theme(legend.key.height = unit(.5,"lines")) +
         scale_color_distiller(g, palette = "RdBu", direction = -1) +
@@ -388,7 +384,7 @@ for(g in unique(x.melt$gene)) {
 
     print(plt)
     .file <- fig.dir %&% "/Fig_mtconv_gene_umap" %&% g %&% ".pdf"
-    .gg.save(filename = .file, plot = plt, width=3, height=2.5)
+    ## .gg.save(filename = .file, plot = plt, width=3, height=2.5)
 }
 ```
 
@@ -489,7 +485,7 @@ if.needed(.file, {
 
     .batches <-
         fread(.data$col, col.names="tag", header=F) %>%
-        parse.tag() %>% 
+        parse.tag() %>%
         left_join(.hash.info)
 
     bb <- .batches %>%
@@ -599,33 +595,7 @@ print(plt)
 #### Confirm cell type identity based on known marker genes?
 
 ```{r select_mtreg_marker_genes}
-.rows <- fread(.data$row, col.names="gene", header=F)
-.rows[, c("ensembl_gene_id","hgnc_symbol") := tstrsplit(`gene`,split="_")]
-.rows[, r := 1:.N]
-
-.cols <- fread(.data$col, col.names="tag", header=F) %>%
-    mutate(c = 1:n()) %>%
-    left_join(.cells) %>%
-    na.omit() %>%
-    as.data.table()
-```
-
-```{r}
-rr <- .rows[hgnc_symbol %in% .markers]$r
-
-uu <- .bbknn$U[rr, , drop = F]
-rownames(uu) <- .rows[hgnc_symbol %in% .markers]$hgnc_symbol
-
-cc <- .cols$c
-vv <- .bbknn$factors.adjusted[cc, , drop = F]
-rownames(vv) <- .cols$tag
-
-X <- sweep(uu, 2, .bbknn$D, `*`) %*% t(vv)
-x.melt <- reshape2::melt(X) %>% as.data.table()
-x.melt[, x := scale(value), by = .(Var2)]
-x.melt[, x := scale(x), by = .(Var1)]
-x.melt[, tag := Var2]
-x.melt[, gene := Var1]
+x.melt <- bbknn.x.melt(.data, .bbknn, .bbknn.umap, .markers)
 ```
 
 ```{r}
@@ -634,9 +604,9 @@ x.melt[, gene := Var1]
 .sum.subj[, x := scale(x), by = .(gene)]
 ```
 
-#### Summary
+#### Summary heatmap
 
-```{r Fig_mtreg_sum_membership, fig.width=2, fig.height=6}
+```{r Fig_mtreg_sum_membership, fig.width=2, fig.height=6.5}
 .sum <-
     .sum.subj[, .(x = median(x)), by = .(gene, membership)] %>%
     mutate(col = `gene`, row = membership, weight = x) %>%
@@ -660,7 +630,7 @@ print(plt)
 .marker.order <- sort(unique(.sum$col))
 ```
 
-```{r Fig_mtreg_sum_subj_member, fig.width=6, fig.height=6}
+```{r Fig_mtreg_sum_subj_member, fig.width=6, fig.height=6.5}
 .dt <- copy(.sum.subj) %>%
     mutate(gene = factor(`gene`, .marker.order)) %>%
     mutate(t = subject %&% "." %&% membership)
@@ -681,23 +651,25 @@ print(plt)
 .gg.save(filename = .file, plot = plt, width=6, height=6)
 ```
 
+**NOTE** The colors are standardized `log1p` expression across genes and cells.
+
 ```{r Fig_mtreg_gene_umap, fig.width=3, fig.height=2.5}
 for(g in unique(x.melt$gene)) {
     .dt <- left_join(x.melt[gene == g], .cells)
-    .aes <- aes(umap1, umap2, color=pmin(pmax(x, -2.5), 2.5))
+    .aes <- aes(umap1, umap2, color=pmax(pmin(x, 3), -3))
 
     plt <-
         .gg.plot(.dt[order(`x`)], .aes) +
         xlab("UMAP1") + ylab("UMAP2") +
-        geom_point(stroke = 0, size=.7) +
+        ggrastr::rasterise(geom_point(stroke = 0, size=.7), dpi=300) +
         theme(legend.key.width = unit(.2,"lines")) +
         theme(legend.key.height = unit(.5,"lines")) +
         scale_color_distiller(g, palette = "RdBu", direction = -1) +
         ggtitle(g)
 
     print(plt)
-    .file <- fig.dir %&% "/Fig_mtreg_gene_umap" %&% g %&% ".pdf"
-    .gg.save(filename = .file, plot = plt, width=3, height=2.5)
+    .file <- fig.dir %&% "/Fig_mtreg_gene_umap_" %&% g %&% ".pdf"
+    ## .gg.save(filename = .file, plot = plt, width=3, height=2.5)
 }
 ```
 
@@ -740,12 +712,12 @@ print(plt)
 ```{r select_top_markers}
 ## Actually, p-values are meaningless because we did clustering based
 ## on expression and testing the significance of clustering results.
-.stat <- 
+.stat <-
     marker.stat[p.adjust(wilcox.p) < .01 &
                 p.adjust(ttest.p) < .01 &
                 ttest.t > 0]
 
-.top.markers <- 
+.top.markers <-
     .stat[order(`ttest.t`, `sd`, decreasing = T),
           head(.SD, 10),
           by = .(membership)]
@@ -753,3 +725,71 @@ print(plt)
 top.stat <- .stat[gene %in% .top.markers$gene]
 ```
 
+### PRDM1 vs. SGK1 (also standardized across cells)
+
+```{r Fig_mtreg_gene_umap_other, fig.width=3, fig.height=2.5, echo = F}
+x.melt <- bbknn.x.melt(.data, .bbknn, .bbknn.umap, c("SGK1", "PRDM1"))
+
+for(g in unique(x.melt$gene)) {
+    .dt <- left_join(x.melt[gene == g], .cells)
+    .aes <- aes(umap1, umap2, color=pmax(pmin(x, 3), -3))
+
+    plt <-
+        .gg.plot(.dt[order(`x`)], .aes) +
+        xlab("UMAP1") + ylab("UMAP2") +
+        ggrastr::rasterise(geom_point(stroke = 0, size=.7), dpi=300) +
+        theme(legend.key.width = unit(.2,"lines")) +
+        theme(legend.key.height = unit(.5,"lines")) +
+        scale_color_distiller(g, palette = "RdBu", direction = -1) +
+        ggtitle(g)
+
+    print(plt)
+    .file <- fig.dir %&% "/Fig_mtreg_gene_umap" %&% g %&% ".pdf"
+    ## .gg.save(filename = .file, plot = plt, width=3, height=2.5)
+}
+```
+
+### What about the PRDM1 long and short isoforms?
+
+```{r Fig_mtreg_PRDM1_iso_umap, fig.width=6, fig.height=2.6, echo = F}
+prdm.dt <- fread("data/PRDM1/PRDM1_SL.csv.gz") %>%
+    select(-hash)
+
+.dt <-
+    copy(.cells) %>%
+    left_join(prdm.dt) %>%
+    na.omit() %>%
+    as.data.table()
+
+.aes <- aes(umap1, umap2, colour=pmin(PRDM1_short, 3))
+
+p1 <-
+    .gg.plot(.dt[order(PRDM1_short)], .aes) +
+    xlab("UMAP1") + ylab("UMAP2") + ggtitle("shrot") +
+    ggrastr::rasterise(geom_point(stroke=0, size=1), dpi = 300) +
+    theme(legend.key.width = unit(.2,"lines")) +
+    theme(legend.key.height = unit(.5,"lines")) +
+    scale_colour_distiller("PRDM1\nshort",
+                           palette="RdPu",
+                           direction=1)
+
+.aes <- aes(umap1, umap2, colour=pmin(PRDM1_long, 3))
+
+p2 <-
+    .gg.plot(.dt[order(PRDM1_long)], .aes) +
+    xlab("UMAP1") + ylab("UMAP2") + ggtitle("long") +
+    ggrastr::rasterise(geom_point(stroke=0, size=1), dpi = 300) +
+    theme(legend.key.width = unit(.2,"lines")) +
+    theme(legend.key.height = unit(.5,"lines")) +
+    scale_colour_distiller("PRDM1\nlong",
+                           palette="RdPu",
+                           direction=1)
+
+plt <- p1 | p2
+print(plt)
+```
+
+```{r results="asis", echo = F}
+.file <- fig.dir %&% "/Fig_mtreg_gene_umap_prdm1_iso.pdf"
+## .gg.save(filename = .file, plot = plt, width=6, height=2.6)
+```

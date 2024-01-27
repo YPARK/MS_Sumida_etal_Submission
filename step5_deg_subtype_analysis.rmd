@@ -3,6 +3,11 @@ title: "Step 5: differential Expression analysis for sub clusters"
 date: "`r Sys.Date()`"
 author: Yongjin Park
 bibliography: "MS_Ref.bib"
+output:
+  html_document:
+    toc: true
+    keep_md: true
+    self_contained: true
 ---
 
 ```{r GlobOpt, include=FALSE}

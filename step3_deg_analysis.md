@@ -1,0 +1,609 @@
+---
+title: "Step 3: differential Expression analysis"
+date: "2024-01-26"
+author: Yongjin Park
+bibliography: "MS_Ref.bib"
+output:
+  html_document:
+    toc: true
+    keep_md: true
+    self_contained: true
+---
+
+
+
+# 1. MS vs. HC at the major cell type level
+
+
+```r
+.hash.hdr <- "result/step1/hash"
+.hash.data <- fileset.list(.hash.hdr)
+.hash.mtx <- read.dense(.hash.data$mtx)
+.hash.argmax <- apply(.hash.mtx, 2, which.max)
+
+.hash.cells <- .hash.data$col %>%
+    fread(header=F, col.names="cell") %>%
+    (function(x) {
+        x[,c("barcode","batch"):=tstrsplit(`cell`,split="_")];
+        x[, barcode := gsub(`barcode`, pattern="-[0-9]$", replacement="")];
+        x[, hash := .hash.argmax]
+        x[, batch := as.integer(`batch`)]
+        return(x);
+    })
+
+.sample.info <-
+    readxl::read_xlsx("data/Hashing list MS Treg project.xlsx", 1) %>%
+    rename(Sample = `Cell type`) %>%
+    mutate(hash = gsub("#","",`hash`)) %>%
+    mutate(hash = as.integer(`hash`)) %>%
+    mutate(disease = substr(`subject`, 1, 2))
+
+.hash.info <-
+    left_join(.hash.cells, .sample.info)
+
+annot.dt <-
+    fread("Tab/step2_celltype.txt.gz") %>%
+    left_join(.hash.info) %>%
+    na.omit()
+
+sort.col <- function(.mat, .cts, .indvs){
+
+    .fun <- function(ct) paste0(.indvs, "_", ct)
+
+    .samples <-
+        lapply(.cts, .fun) %>%
+        do.call(what=c) %>%
+        sort()
+
+    .idx <- match(.samples, colnames(.mat))
+    .idx <- .idx[!is.na(.idx)]
+    .mat[, .idx, drop = FALSE]
+}
+
+combine.statistics <- function(.result){
+
+    ret <- lapply(names(.result), function(v) {
+        .mat <- .result[[v]]
+        if(!is.matrix(.mat)) return(NULL)
+        as.data.table(reshape2::melt(.mat, value.name = v))
+    })
+
+    out <- ret[[1]]
+    for(j in 2:length(ret)){
+        if(is.null(out)) {
+            out <- ret[[j]]
+        } else if(!is.null(ret[[j]])) {
+            out <- merge(out, ret[[j]])
+        }
+    }
+    return(out)
+}
+
+summarize.deg <- function(.dt, tot.cutoff = 3, disease.name = "MS", control.name = "HA") {
+
+    ## adjust potential bias
+    .dt[`tot` >= tot.cutoff, b := mean(cfa), by = .(gene, celltype)]
+    .dt[, cfa := cfa - b]
+
+    ## .sd <- .dt[`tot` >= tot.cutoff,
+    ##            .(min.sd = sd(cfa) / sqrt(.N)),
+    ##            by = .(gene, celltype)]
+    ## left_join(.sd) %>%
+
+    .dt <- .dt %>%
+        filter(`tot` >= tot.cutoff) %>%
+        mutate(w = 1/cfa.sd^2) %>%
+        as.data.table
+
+    ## average disease effect on the disease subjects
+    ADD.dt <-
+        .dt[disease == disease.name & `tot` >= tot.cutoff,
+               .(ADD = sum(cfa * w) / sum(w),
+                 ADD.se = sqrt(1/sum(w))),
+               by = .(gene, celltype)]
+
+    ## average disease effect on the control subjects
+    ADC.dt <-
+        .dt[disease == control.name & `tot` >= tot.cutoff,
+               .(ADC = -sum(cfa * w)/ sum(w),
+                 ADC.se = sqrt(1/sum(w))),
+               by = .(gene, celltype)]
+
+    ## average disease effect
+    ADE.dt <-
+        .dt[`tot` >= tot.cutoff] %>%
+        mutate(cfa.s = if_else(disease == disease.name, 1, -1) * cfa) %>%
+        mutate(tot.s = if_else(disease == disease.name, 1, -1) * tot) %>%
+        as.data.table %>%
+        (function(xx) {
+            xx[,
+               .(ADE = sum(cfa.s * w) / sum(w),
+                 ADE.se = sqrt(1/sum(w)),
+                 tot = sum(tot)),
+               by = .(gene, celltype)
+               ]
+        }) %>%
+        mutate(z = ADE/ADE.se) %>%
+        mutate(pv = 2 * pnorm(abs(z), lower.tail=FALSE)) %>%
+        mutate(fwer = p.adjust(pv, "holm")) %>%
+        mutate(fdr = p.adjust(pv, "fdr")) %>%
+        as.data.table
+
+    left_join(ADE.dt, ADD.dt) %>% left_join(ADC.dt) %>% as.data.table
+}
+```
+
+
+
+```r
+.data <- fileset.list("result/step1/matrix_final")
+.mkdir("result/step3/deg/")
+.deg.data <- fileset.list("result/step3/deg/hc_ms")
+
+if.needed(.deg.data, {
+    .deg.data <-
+        rcpp_mmutil_copy_selected_columns(.data$mtx,
+                                          .data$row,
+                                          .data$col,
+                                          unique(annot.dt$tag),
+                                          "result/step3/deg/hc_ms")
+})
+
+.file <- "result/step3/deg/hc_ms.rds"
+
+if.needed(.file, {
+
+    .celltype <-
+        annot.dt[, .(tag, celltype)] %>%
+        as.data.frame()
+
+    .cell2indv <- annot.dt[, .(tag, subject)] %>%
+        unique %>%
+        as.data.frame()
+
+    .indv2exp <- .cell2indv %>%
+        select(subject) %>%
+        mutate(disease = substr(`subject`, 1, 2)) %>%
+        as.data.frame()
+
+    .deg.stat <-
+        make.cocoa(.deg.data, .celltype, .cell2indv, .indv2exp,
+                   .rank = 15, .em.iter = 20, .em.tol = 1e-8, .take.ln = TRUE,
+                   knn = 50, impute.by.knn = TRUE, num.threads = 8)
+
+   saveRDS(.deg.stat, .file)
+})
+
+.deg.stat <- readRDS(.file)
+
+.cts <- unique(annot.dt$celltype)
+.indvs <- unique(annot.dt$subject)
+
+.hc.ms.dt <-
+    list(tot = sort.col(.deg.stat$sum, .cts, .indvs),
+         cfa = sort.col(.deg.stat$resid.ln.mu, .cts, .indvs),
+         cfa.sd = sort.col(.deg.stat$resid.ln.mu.sd, .cts, .indvs)) %>%
+    combine.statistics()
+
+.hc.ms.dt[, c("subject","celltype") := tstrsplit(`Var2`,split="_")]
+.hc.ms.dt[, disease := substr(`subject`,1,2)]
+.hc.ms.dt[, gene := `Var1`]
+.hc.ms.dt[, `Var1` := NULL]
+.hc.ms.dt[, `Var2` := NULL]
+
+hc.ms.deg <- summarize.deg(.hc.ms.dt)
+```
+
+### Comparison with the bulk DEG results
+
+
+```r
+plot.bulk.sc <- function(.sc, .bulk, fdr.cutoff = .01, tot.cutoff = 100, qv.cutoff = .2, n.top = 7) {
+
+    .dt <- left_join(.bulk, .sc) %>%
+        mutate(sc.z = pmin(pmax(scale(z), -10), 10)) %>%
+        na.omit %>%
+        arrange(abs(sc.z)) %>%
+        as.data.table
+
+    .dt.show <-
+        .dt[`fdr` < `fdr.cutoff` & `bulk.qv` < qv.cutoff & `tot` > tot.cutoff] %>%
+        group_by(sign(sc.z)) %>%
+        top_n(n.top, -log10(pv)) %>%
+        ungroup() %>%
+        as.data.table
+
+    rr <- cor(.dt$z, .dt$bulk.t, method="spearman")
+    r.pv <- cor.test(.dt$z, .dt$bulk.t, method="spearman")$p.value
+
+    .dt.pos <- .dt.show[z > 0]
+    .dt.neg <- .dt.show[z < 0]
+
+    .scale.size <-
+        scale_size_continuous(range=c(1,2.5), labels = function(x) num.sci(10^(-x)), guide = "none")
+
+    plt <-
+        ggplot(.dt, aes(x = bulk.t, y = sc.z)) +
+        theme_minimal() +
+        xlab("bulk RNA-seq DEG effect") + ylab("scRNA-seq DEG effect") +
+        scale_x_continuous(limits = c(-7, 7)) +
+        geom_point(aes(size = -log10(pmax(pv, bulk.pv))),
+                   stroke=.2, pch=21, colour="gray40") +
+        .scale.size +
+        geom_vline(xintercept = 0, linewidth = .1) +
+        geom_hline(yintercept = 0, linewidth = .1) +
+        geom_smooth(aes(bulk.t, sc.z), method="lm", se=FALSE, colour="red", lty=1, formula = y ~ x - 1, linewidth=.5)
+
+    .aes <- aes(label = hgnc_symbol %&% "\n(" %&% num.sci(bulk.pv) %&% ")")
+
+    if(nrow(.dt.pos) > 0) {
+        plt <- plt +
+            geom_point(data=.dt.pos, pch=21, fill="#ef8a62") +
+            ggrepel::geom_label_repel(data=.dt.pos, .aes,
+                                      size = 3, vjust=1, hjust=1,
+                                      segment.size = .1,
+                                      segment.color = "#ef8a62",
+                                      box.padding = .1,
+                                      label.padding = .1,
+                                      nudge_x = -1, nudge_y = -1,
+                                      max.overlaps = 10)
+    }
+
+    if(nrow(.dt.neg) > 0) {
+        plt <- plt +
+            geom_point(data=.dt.neg, pch=21, fill="#67a9cf") +
+            ggrepel::geom_label_repel(data=.dt.neg, .aes,
+                                      size = 3, vjust=0, hjust=0,
+                                      segment.size = .1,
+                                      segment.color = "#67a9cf",
+                                      box.padding = .1,
+                                      label.padding = .1,
+                                      nudge_x = 1, nudge_y = 1,
+                                      max.overlaps = 10)
+    }
+
+    plt <- plt +
+        ggtitle("Cor=" %&%
+                num.round(rr) %&%
+                ", p=" %&% num.sci(r.pv) %&%
+                ", N=" %&% num.int(nrow(.dt)))
+
+    list(plt=plt, cor = rr, cor.pv = r.pv)
+}
+```
+
+
+```r
+read.bulk <- function(.file) {
+    fread(.file) %>%
+        rename(hgnc_symbol = gene_name) %>%
+        rename(bulk.t = t, bulk.pv = P.Value, bulk.qv = adj.P.Val) %>%
+        dplyr::select(hgnc_symbol, starts_with("bulk"))
+}
+
+.file <- "data/DEG/20180513/deg.ms.hc.treg.mem.exvivo.sex_covar.ruv.txt"
+bulk.mTreg.dt <- read.bulk(.file)
+
+.file <- "data/DEG/20180513/deg.ms.hc.teff.mem.exvivo.sex_covar.ruv.txt"
+bulk.mTconv.dt <- read.bulk(.file)
+```
+
+[**DOWNLOAD:** DEG MS vs HC](Tab/DEG_MS_vs_HC.txt.gz)
+
+#### Memory Treg genes
+
+
+```r
+.sc <- hc.ms.deg[celltype == "mTreg" &
+                 sign(ADD) == sign(z) &
+                 sign(ADC) == sign(z),]
+
+.sc[, c("ensembl_gene_id","hgnc_symbol") := tstrsplit(`gene`, split="_")]
+
+.bulk <- bulk.mTreg.dt
+
+.out <- plot.bulk.sc(.sc,
+                     .bulk,
+                     fdr.cutoff = .01,
+                     qv.cutoff = .2,
+                     n.top = 10)
+```
+
+#### Correlation 0.27 with p-value = 2.67e-119
+
+![](Fig/STEP3/Fig_DEG_comparison_mTreg-1.png)<!-- -->
+
+[PDF](Fig/STEP3//Fig_DEG_comparison_mTreg.pdf)
+
+#### Memory Tconv genes
+
+
+```r
+.sc <- hc.ms.deg[celltype == "mTconv" &
+                 sign(ADD) == sign(z) &
+                 sign(ADC) == sign(z),]
+
+.sc[, c("ensembl_gene_id","hgnc_symbol") := tstrsplit(`gene`, split="_")]
+
+.bulk <- bulk.mTconv.dt
+
+.out <- plot.bulk.sc(.sc,
+                     .bulk,
+                     fdr.cutoff = .01,
+                     qv.cutoff = .2,
+                     n.top = 10)
+```
+
+#### Correlation 0.27 with p-value = 3.11e-135
+
+![](Fig/STEP3/Fig_DEG_comparison_mTconv-1.png)<!-- -->
+
+[PDF](Fig/STEP3//Fig_DEG_comparison_mTconv.pdf)
+
+### Found 849 unique genes strongly perturbed by MS with FWER 5%
+
+* Up-regulated: 386
+
+* Down-regulated:  524
+
+* Total pairs of genes and cell types: 49,931
+
+
+```r
+count.deg <- function(.dt, fwer.cutoff = .05) {
+    .dt[fwer < fwer.cutoff &
+        sign(ADD) == sign(ADE) &
+        sign(ADC) == sign(ADE),
+        .(n = .N),
+        by = .(celltype,
+               direction = if_else(z > 0, "up", "down"))
+        ] %>%
+        mutate(direction = factor(direction, c("up", "down"))) %>%
+        group_by(celltype) %>%
+        arrange(desc(direction)) %>%
+        mutate(nc = cumsum(n)) %>%
+        ungroup
+}
+```
+
+![](Fig/STEP3/Fig_DEG_count-1.png)<!-- -->
+
+[PDF](Fig/STEP3//Fig_DEG_count.pdf)
+
+#### Show genes with FWER $< 10^{-2}$ overlapping with the bulk DEGs
+
+
+```r
+show.each.gene <- function(g, .data, .stat, .cutoff = 0) {
+
+    .dt.g <- na.omit(.data[gene == g]) %>% filter(tot > .cutoff)
+    .stat.dt <- na.omit(.stat[gene == g]) %>% rename(total = tot)
+
+    .dir <- .stat.dt[which.max(abs(.stat.dt$ADE)), .(ADE)] %>%
+        unlist
+
+    if(.dir > 0) {
+
+        .dt <- .dt.g %>%
+            left_join(.stat.dt, by = c("celltype", "gene")) %>%
+            group_by(disease, celltype) %>%
+            arrange(cfa) %>%
+            mutate(j = 1:n()) %>%
+            ungroup() %>%
+            mutate(x = disease %&% "_" %&% j)
+
+    } else {
+
+        .dt <- .dt.g %>%
+            left_join(.stat.dt, by = c("celltype", "gene")) %>%
+            group_by(disease, celltype) %>%
+            arrange(desc(cfa)) %>%
+            mutate(j = 1:n()) %>%
+            ungroup() %>%
+            mutate(x = disease %&% "_" %&% j)
+
+    }
+
+    .dt <- .dt %>%
+        mutate(.pv = if_else(is.na(pv), "1", num.sci(pv))) %>%
+        mutate(.facet = celltype %&% "\n(" %&% .pv %&% ")") %>%
+        mutate(ADD.z = ADD/ADD.se, ADC.z = ADC/ADC.se) %>%
+        as.data.table
+
+    .stat.dt <- .dt[, .(celltype,
+                        ADE, ADE.se,
+                        ADD, ADD.se,
+                        ADC, ADC.se,
+                        pv, .facet)] %>%
+        unique
+
+    .aes <- aes(x = x,
+                y = cfa,
+                ymin = cfa - 2 * cfa.sd,
+                ymax = cfa + 2 * cfa.sd,
+                fill = disease)
+
+    .scale.y <- scale_y_continuous(labels = function(x) num.round(exp(x)))
+
+    p1 <-
+        .gg.plot(.dt, .aes) +
+        theme(legend.position = "top") +
+        facet_wrap(~.facet, nrow = 1, scales="free") +
+        .scale.y +
+        theme(axis.ticks.x = element_blank()) +
+        theme(axis.text.x = element_blank()) +
+        theme(axis.title.x = element_blank()) +
+        geom_hline(yintercept = 0, linewidth = 1, colour = "gray") +
+        geom_hline(data = .stat.dt, aes(yintercept = ADE), linewidth = 1, colour = "#F8766D") +
+        geom_linerange(linewidth = .2) +
+        geom_point(aes(size = tot), pch = 21, stroke = .2) +
+        scale_size_continuous("total(k)", range=c(0.1, 2.5), labels = function(x) num.int(x/1e3)) +
+        scale_fill_manual(values = c("gray90","#F8766D")) +
+        xlab("") + ylab("fold change") + ggtitle(g)
+
+    .temp.1 <- .stat.dt %>%
+        dplyr::select(celltype, pv, ADE, ADD, ADC) %>%
+        mutate(ADC = - ADC) %>%                  # flip the effect
+        melt(id.vars=c("celltype", "pv"), value.name = "mu")
+
+    .temp.2 <- .stat.dt %>%
+        dplyr::select(celltype, ADE.se, ADD.se, ADC.se) %>%
+        melt(id.vars="celltype", value.name = "se") %>%
+        mutate(variable = str_remove(variable, ".se"))
+
+    .temp <- left_join(.temp.1, .temp.2, by = c("celltype", "variable"))
+
+    .aes <- aes(x = variable,
+                y = mu,
+                ymin = mu - 3 * se,
+                ymax = mu + 3 * se)
+
+    p2 <-
+        .gg.plot(.temp, .aes) +
+        theme(axis.text.x = element_text(angle=90, hjust = 1, vjust= .5)) +
+        facet_wrap(~celltype, nrow = 1, scales="free") +
+        .scale.y + ylab("fold change") + xlab("") +
+        geom_hline(yintercept = 0, lty = 2, linewidth = .5, colour = "black") +
+        geom_linerange(linewidth = .2) +
+        geom_point(aes(fill = variable, stroke = .2, size = -log10(pv)), pch = 21) +
+        scale_fill_brewer(palette = "Greens", guide="none") +
+        scale_size_continuous("p-value", range=c(.5, 2.5), breaks=seq(0, 10, 2), labels = function(x) 10^(-x))
+
+    plt <- (p1 / p2) + patchwork::plot_layout(heights = c(4,2))
+    return(plt)
+}
+```
+
+
+```r
+.bulk.genes <-
+    rbind(bulk.mTreg.dt[bulk.qv < .2, .(hgnc_symbol)],
+          bulk.mTconv.dt[bulk.qv < .2, .(hgnc_symbol)]) %>%
+    unique() %>%
+    unlist()
+
+hc.ms.deg[, c("ensembl_gene_id", "hgnc_symbol") := tstrsplit(`gene`, split="_")]
+
+.genes.show <-
+    hc.ms.deg[fwer < 0.05 &
+              hgnc_symbol %in% .bulk.genes &
+              sign(ADD) == sign(ADE) &
+              sign(ADC) == sign(ADE)] %>%
+    select(gene) %>%
+    unique %>%
+    unlist %>%
+    as.character
+```
+
+[CD226_CD226](Fig/STEP3//Fig_DEG_example_CD226_CD226.pdf) [CD27_CD27](Fig/STEP3//Fig_DEG_example_CD27_CD27.pdf) [CD58_CD58](Fig/STEP3//Fig_DEG_example_CD58_CD58.pdf) [ENSG00000003056_M6PR](Fig/STEP3//Fig_DEG_example_ENSG00000003056_M6PR.pdf) [ENSG00000005302_MSL3](Fig/STEP3//Fig_DEG_example_ENSG00000005302_MSL3.pdf) [ENSG00000007312_CD79B](Fig/STEP3//Fig_DEG_example_ENSG00000007312_CD79B.pdf) [ENSG00000009790_TRAF3IP3](Fig/STEP3//Fig_DEG_example_ENSG00000009790_TRAF3IP3.pdf) [ENSG00000023892_DEF6](Fig/STEP3//Fig_DEG_example_ENSG00000023892_DEF6.pdf) [ENSG00000030582_GRN](Fig/STEP3//Fig_DEG_example_ENSG00000030582_GRN.pdf) [ENSG00000034677_RNF19A](Fig/STEP3//Fig_DEG_example_ENSG00000034677_RNF19A.pdf) [ENSG00000038274_MAT2B](Fig/STEP3//Fig_DEG_example_ENSG00000038274_MAT2B.pdf) [ENSG00000040275_SPDL1](Fig/STEP3//Fig_DEG_example_ENSG00000040275_SPDL1.pdf) [ENSG00000040633_PHF23](Fig/STEP3//Fig_DEG_example_ENSG00000040633_PHF23.pdf) [ENSG00000051108_HERPUD1](Fig/STEP3//Fig_DEG_example_ENSG00000051108_HERPUD1.pdf) [ENSG00000054118_THRAP3](Fig/STEP3//Fig_DEG_example_ENSG00000054118_THRAP3.pdf) [ENSG00000057657_PRDM1](Fig/STEP3//Fig_DEG_example_ENSG00000057657_PRDM1.pdf) [ENSG00000065911_MTHFD2](Fig/STEP3//Fig_DEG_example_ENSG00000065911_MTHFD2.pdf) [ENSG00000065978_YBX1](Fig/STEP3//Fig_DEG_example_ENSG00000065978_YBX1.pdf) [ENSG00000069399_BCL3](Fig/STEP3//Fig_DEG_example_ENSG00000069399_BCL3.pdf) [ENSG00000071073_MGAT4A](Fig/STEP3//Fig_DEG_example_ENSG00000071073_MGAT4A.pdf) [ENSG00000075239_ACAT1](Fig/STEP3//Fig_DEG_example_ENSG00000075239_ACAT1.pdf) [ENSG00000077152_UBE2T](Fig/STEP3//Fig_DEG_example_ENSG00000077152_UBE2T.pdf) [ENSG00000077420_APBB1IP](Fig/STEP3//Fig_DEG_example_ENSG00000077420_APBB1IP.pdf) [ENSG00000079246_XRCC5](Fig/STEP3//Fig_DEG_example_ENSG00000079246_XRCC5.pdf) [ENSG00000081237_PTPRC](Fig/STEP3//Fig_DEG_example_ENSG00000081237_PTPRC.pdf) [ENSG00000087502_ERGIC2](Fig/STEP3//Fig_DEG_example_ENSG00000087502_ERGIC2.pdf) [ENSG00000088986_DYNLL1](Fig/STEP3//Fig_DEG_example_ENSG00000088986_DYNLL1.pdf) [ENSG00000089157_RPLP0](Fig/STEP3//Fig_DEG_example_ENSG00000089157_RPLP0.pdf) [ENSG00000095370_SH2D3C](Fig/STEP3//Fig_DEG_example_ENSG00000095370_SH2D3C.pdf) [ENSG00000099622_CIRBP](Fig/STEP3//Fig_DEG_example_ENSG00000099622_CIRBP.pdf) [ENSG00000099985_OSM](Fig/STEP3//Fig_DEG_example_ENSG00000099985_OSM.pdf) [ENSG00000100100_PIK3IP1](Fig/STEP3//Fig_DEG_example_ENSG00000100100_PIK3IP1.pdf) [ENSG00000100129_EIF3L](Fig/STEP3//Fig_DEG_example_ENSG00000100129_EIF3L.pdf) [ENSG00000100201_DDX17](Fig/STEP3//Fig_DEG_example_ENSG00000100201_DDX17.pdf) [ENSG00000100219_XBP1](Fig/STEP3//Fig_DEG_example_ENSG00000100219_XBP1.pdf) [ENSG00000100316_RPL3](Fig/STEP3//Fig_DEG_example_ENSG00000100316_RPL3.pdf) [ENSG00000100650_SRSF5](Fig/STEP3//Fig_DEG_example_ENSG00000100650_SRSF5.pdf) [ENSG00000101057_MYBL2](Fig/STEP3//Fig_DEG_example_ENSG00000101057_MYBL2.pdf) [ENSG00000101096_NFATC2](Fig/STEP3//Fig_DEG_example_ENSG00000101096_NFATC2.pdf) [ENSG00000101608_MYL12A](Fig/STEP3//Fig_DEG_example_ENSG00000101608_MYL12A.pdf) [ENSG00000102245_CD40LG](Fig/STEP3//Fig_DEG_example_ENSG00000102245_CD40LG.pdf) [ENSG00000102317_RBM3](Fig/STEP3//Fig_DEG_example_ENSG00000102317_RBM3.pdf) [ENSG00000102760_RGCC](Fig/STEP3//Fig_DEG_example_ENSG00000102760_RGCC.pdf) [ENSG00000103381_CPPED1](Fig/STEP3//Fig_DEG_example_ENSG00000103381_CPPED1.pdf) [ENSG00000104408_EIF3E](Fig/STEP3//Fig_DEG_example_ENSG00000104408_EIF3E.pdf) [ENSG00000104660_LEPROTL1](Fig/STEP3//Fig_DEG_example_ENSG00000104660_LEPROTL1.pdf) [ENSG00000105472_CLEC11A](Fig/STEP3//Fig_DEG_example_ENSG00000105472_CLEC11A.pdf) [ENSG00000105835_NAMPT](Fig/STEP3//Fig_DEG_example_ENSG00000105835_NAMPT.pdf) [ENSG00000106153_CHCHD2](Fig/STEP3//Fig_DEG_example_ENSG00000106153_CHCHD2.pdf) [ENSG00000106460_TMEM106B](Fig/STEP3//Fig_DEG_example_ENSG00000106460_TMEM106B.pdf) [ENSG00000106560_GIMAP2](Fig/STEP3//Fig_DEG_example_ENSG00000106560_GIMAP2.pdf) [ENSG00000107201_DDX58](Fig/STEP3//Fig_DEG_example_ENSG00000107201_DDX58.pdf) [ENSG00000107968_MAP3K8](Fig/STEP3//Fig_DEG_example_ENSG00000107968_MAP3K8.pdf) [ENSG00000108298_RPL19](Fig/STEP3//Fig_DEG_example_ENSG00000108298_RPL19.pdf) [ENSG00000108622_ICAM2](Fig/STEP3//Fig_DEG_example_ENSG00000108622_ICAM2.pdf) [ENSG00000109062_SLC9A3R1](Fig/STEP3//Fig_DEG_example_ENSG00000109062_SLC9A3R1.pdf) [ENSG00000109321_AREG](Fig/STEP3//Fig_DEG_example_ENSG00000109321_AREG.pdf) [ENSG00000109861_CTSC](Fig/STEP3//Fig_DEG_example_ENSG00000109861_CTSC.pdf) [ENSG00000109971_HSPA8](Fig/STEP3//Fig_DEG_example_ENSG00000109971_HSPA8.pdf) [ENSG00000110852_CLEC2B](Fig/STEP3//Fig_DEG_example_ENSG00000110852_CLEC2B.pdf) [ENSG00000110876_SELPLG](Fig/STEP3//Fig_DEG_example_ENSG00000110876_SELPLG.pdf) [ENSG00000111639_MRPL51](Fig/STEP3//Fig_DEG_example_ENSG00000111639_MRPL51.pdf) [ENSG00000112079_STK38](Fig/STEP3//Fig_DEG_example_ENSG00000112079_STK38.pdf) [ENSG00000112110_MRPL18](Fig/STEP3//Fig_DEG_example_ENSG00000112110_MRPL18.pdf) [ENSG00000112149_CD83](Fig/STEP3//Fig_DEG_example_ENSG00000112149_CD83.pdf) [ENSG00000112365_ZBTB24](Fig/STEP3//Fig_DEG_example_ENSG00000112365_ZBTB24.pdf) [ENSG00000113732_ATP6V0E1](Fig/STEP3//Fig_DEG_example_ENSG00000113732_ATP6V0E1.pdf) [ENSG00000114209_PDCD10](Fig/STEP3//Fig_DEG_example_ENSG00000114209_PDCD10.pdf) [ENSG00000114942_EEF1B2](Fig/STEP3//Fig_DEG_example_ENSG00000114942_EEF1B2.pdf) [ENSG00000115091_ACTR3](Fig/STEP3//Fig_DEG_example_ENSG00000115091_ACTR3.pdf) [ENSG00000115687_PASK](Fig/STEP3//Fig_DEG_example_ENSG00000115687_PASK.pdf) [ENSG00000115758_ODC1](Fig/STEP3//Fig_DEG_example_ENSG00000115758_ODC1.pdf) [ENSG00000116717_GADD45A](Fig/STEP3//Fig_DEG_example_ENSG00000116717_GADD45A.pdf) [ENSG00000117228_GBP1](Fig/STEP3//Fig_DEG_example_ENSG00000117228_GBP1.pdf) [ENSG00000117280_RAB29](Fig/STEP3//Fig_DEG_example_ENSG00000117280_RAB29.pdf) [ENSG00000117318_ID3](Fig/STEP3//Fig_DEG_example_ENSG00000117318_ID3.pdf) [ENSG00000118515_SGK1](Fig/STEP3//Fig_DEG_example_ENSG00000118515_SGK1.pdf) [ENSG00000119718_EIF2B2](Fig/STEP3//Fig_DEG_example_ENSG00000119718_EIF2B2.pdf) [ENSG00000120875_DUSP4](Fig/STEP3//Fig_DEG_example_ENSG00000120875_DUSP4.pdf) [ENSG00000120913_PDLIM2](Fig/STEP3//Fig_DEG_example_ENSG00000120913_PDLIM2.pdf) [ENSG00000121067_SPOP](Fig/STEP3//Fig_DEG_example_ENSG00000121067_SPOP.pdf) [ENSG00000121742_GJB6](Fig/STEP3//Fig_DEG_example_ENSG00000121742_GJB6.pdf) [ENSG00000121858_TNFSF10](Fig/STEP3//Fig_DEG_example_ENSG00000121858_TNFSF10.pdf) [ENSG00000122026_RPL21](Fig/STEP3//Fig_DEG_example_ENSG00000122026_RPL21.pdf) [ENSG00000122224_LY9](Fig/STEP3//Fig_DEG_example_ENSG00000122224_LY9.pdf) [ENSG00000122406_RPL5](Fig/STEP3//Fig_DEG_example_ENSG00000122406_RPL5.pdf) [ENSG00000122862_SRGN](Fig/STEP3//Fig_DEG_example_ENSG00000122862_SRGN.pdf) [ENSG00000123416_TUBA1B](Fig/STEP3//Fig_DEG_example_ENSG00000123416_TUBA1B.pdf) [ENSG00000124588_NQO2](Fig/STEP3//Fig_DEG_example_ENSG00000124588_NQO2.pdf) [ENSG00000125148_MT2A](Fig/STEP3//Fig_DEG_example_ENSG00000125148_MT2A.pdf) [ENSG00000125384_PTGER2](Fig/STEP3//Fig_DEG_example_ENSG00000125384_PTGER2.pdf) [ENSG00000126524_SBDS](Fig/STEP3//Fig_DEG_example_ENSG00000126524_SBDS.pdf) [ENSG00000127774_EMC6](Fig/STEP3//Fig_DEG_example_ENSG00000127774_EMC6.pdf) [ENSG00000127837_AAMP](Fig/STEP3//Fig_DEG_example_ENSG00000127837_AAMP.pdf) [ENSG00000131747_TOP2A](Fig/STEP3//Fig_DEG_example_ENSG00000131747_TOP2A.pdf) [ENSG00000131828_PDHA1](Fig/STEP3//Fig_DEG_example_ENSG00000131828_PDHA1.pdf) [ENSG00000132406_TMEM128](Fig/STEP3//Fig_DEG_example_ENSG00000132406_TMEM128.pdf) [ENSG00000132475_H3F3B](Fig/STEP3//Fig_DEG_example_ENSG00000132475_H3F3B.pdf) [ENSG00000132780_NASP](Fig/STEP3//Fig_DEG_example_ENSG00000132780_NASP.pdf) [ENSG00000132823_OSER1](Fig/STEP3//Fig_DEG_example_ENSG00000132823_OSER1.pdf) [ENSG00000132965_ALOX5AP](Fig/STEP3//Fig_DEG_example_ENSG00000132965_ALOX5AP.pdf) [ENSG00000133030_MPRIP](Fig/STEP3//Fig_DEG_example_ENSG00000133030_MPRIP.pdf) [ENSG00000133561_GIMAP6](Fig/STEP3//Fig_DEG_example_ENSG00000133561_GIMAP6.pdf) [ENSG00000133574_GIMAP4](Fig/STEP3//Fig_DEG_example_ENSG00000133574_GIMAP4.pdf) [ENSG00000133639_BTG1](Fig/STEP3//Fig_DEG_example_ENSG00000133639_BTG1.pdf) [ENSG00000133872_SARAF](Fig/STEP3//Fig_DEG_example_ENSG00000133872_SARAF.pdf) [ENSG00000135046_ANXA1](Fig/STEP3//Fig_DEG_example_ENSG00000135046_ANXA1.pdf) [ENSG00000135972_MRPS9](Fig/STEP3//Fig_DEG_example_ENSG00000135972_MRPS9.pdf) [ENSG00000136026_CKAP4](Fig/STEP3//Fig_DEG_example_ENSG00000136026_CKAP4.pdf) [ENSG00000136213_CHST12](Fig/STEP3//Fig_DEG_example_ENSG00000136213_CHST12.pdf) [ENSG00000136490_LIMD2](Fig/STEP3//Fig_DEG_example_ENSG00000136490_LIMD2.pdf) [ENSG00000136819_C9orf78](Fig/STEP3//Fig_DEG_example_ENSG00000136819_C9orf78.pdf) [ENSG00000136827_TOR1A](Fig/STEP3//Fig_DEG_example_ENSG00000136827_TOR1A.pdf) [ENSG00000137078_SIT1](Fig/STEP3//Fig_DEG_example_ENSG00000137078_SIT1.pdf) [ENSG00000137154_RPS6](Fig/STEP3//Fig_DEG_example_ENSG00000137154_RPS6.pdf) [ENSG00000138172_CALHM2](Fig/STEP3//Fig_DEG_example_ENSG00000138172_CALHM2.pdf) [ENSG00000138757_G3BP2](Fig/STEP3//Fig_DEG_example_ENSG00000138757_G3BP2.pdf) [ENSG00000139187_KLRG1](Fig/STEP3//Fig_DEG_example_ENSG00000139187_KLRG1.pdf) [ENSG00000139644_TMBIM6](Fig/STEP3//Fig_DEG_example_ENSG00000139644_TMBIM6.pdf) [ENSG00000140988_RPS2](Fig/STEP3//Fig_DEG_example_ENSG00000140988_RPS2.pdf) [ENSG00000142227_EMP3](Fig/STEP3//Fig_DEG_example_ENSG00000142227_EMP3.pdf) [ENSG00000143106_PSMA5](Fig/STEP3//Fig_DEG_example_ENSG00000143106_PSMA5.pdf) [ENSG00000143333_RGS16](Fig/STEP3//Fig_DEG_example_ENSG00000143333_RGS16.pdf) [ENSG00000145050_MANF](Fig/STEP3//Fig_DEG_example_ENSG00000145050_MANF.pdf) [ENSG00000145391_SETD7](Fig/STEP3//Fig_DEG_example_ENSG00000145391_SETD7.pdf) [ENSG00000145741_BTF3](Fig/STEP3//Fig_DEG_example_ENSG00000145741_BTF3.pdf) [ENSG00000145779_TNFAIP8](Fig/STEP3//Fig_DEG_example_ENSG00000145779_TNFAIP8.pdf) [ENSG00000146112_PPP1R18](Fig/STEP3//Fig_DEG_example_ENSG00000146112_PPP1R18.pdf) [ENSG00000147403_RPL10](Fig/STEP3//Fig_DEG_example_ENSG00000147403_RPL10.pdf) [ENSG00000147586_MRPS28](Fig/STEP3//Fig_DEG_example_ENSG00000147586_MRPS28.pdf) [ENSG00000147604_RPL7](Fig/STEP3//Fig_DEG_example_ENSG00000147604_RPL7.pdf) [ENSG00000148303_RPL7A](Fig/STEP3//Fig_DEG_example_ENSG00000148303_RPL7A.pdf) [ENSG00000149089_APIP](Fig/STEP3//Fig_DEG_example_ENSG00000149089_APIP.pdf) [ENSG00000149273_RPS3](Fig/STEP3//Fig_DEG_example_ENSG00000149273_RPS3.pdf) [ENSG00000149923_PPP4C](Fig/STEP3//Fig_DEG_example_ENSG00000149923_PPP4C.pdf) [ENSG00000150753_CCT5](Fig/STEP3//Fig_DEG_example_ENSG00000150753_CCT5.pdf) [ENSG00000152518_ZFP36L2](Fig/STEP3//Fig_DEG_example_ENSG00000152518_ZFP36L2.pdf) [ENSG00000155660_PDIA4](Fig/STEP3//Fig_DEG_example_ENSG00000155660_PDIA4.pdf) [ENSG00000156508_EEF1A1](Fig/STEP3//Fig_DEG_example_ENSG00000156508_EEF1A1.pdf) [ENSG00000157303_SUSD3](Fig/STEP3//Fig_DEG_example_ENSG00000157303_SUSD3.pdf) [ENSG00000157456_CCNB2](Fig/STEP3//Fig_DEG_example_ENSG00000157456_CCNB2.pdf) [ENSG00000161016_RPL8](Fig/STEP3//Fig_DEG_example_ENSG00000161016_RPL8.pdf) [ENSG00000162704_ARPC5](Fig/STEP3//Fig_DEG_example_ENSG00000162704_ARPC5.pdf) [ENSG00000162777_DENND2D](Fig/STEP3//Fig_DEG_example_ENSG00000162777_DENND2D.pdf) [ENSG00000162894_FCMR](Fig/STEP3//Fig_DEG_example_ENSG00000162894_FCMR.pdf) [ENSG00000163154_TNFAIP8L2](Fig/STEP3//Fig_DEG_example_ENSG00000163154_TNFAIP8L2.pdf) [ENSG00000163191_S100A11](Fig/STEP3//Fig_DEG_example_ENSG00000163191_S100A11.pdf) [ENSG00000163348_PYGO2](Fig/STEP3//Fig_DEG_example_ENSG00000163348_PYGO2.pdf) [ENSG00000163519_TRAT1](Fig/STEP3//Fig_DEG_example_ENSG00000163519_TRAT1.pdf) [ENSG00000163599_CTLA4](Fig/STEP3//Fig_DEG_example_ENSG00000163599_CTLA4.pdf) [ENSG00000163682_RPL9](Fig/STEP3//Fig_DEG_example_ENSG00000163682_RPL9.pdf) [ENSG00000164104_HMGB2](Fig/STEP3//Fig_DEG_example_ENSG00000164104_HMGB2.pdf) [ENSG00000165389_SPTSSA](Fig/STEP3//Fig_DEG_example_ENSG00000165389_SPTSSA.pdf) [ENSG00000165672_PRDX3](Fig/STEP3//Fig_DEG_example_ENSG00000165672_PRDX3.pdf) [ENSG00000165929_TC2N](Fig/STEP3//Fig_DEG_example_ENSG00000165929_TC2N.pdf) [ENSG00000166477_LEO1](Fig/STEP3//Fig_DEG_example_ENSG00000166477_LEO1.pdf) [ENSG00000166669_ATF7IP2](Fig/STEP3//Fig_DEG_example_ENSG00000166669_ATF7IP2.pdf) [ENSG00000167257_RNF214](Fig/STEP3//Fig_DEG_example_ENSG00000167257_RNF214.pdf) [ENSG00000167658_EEF2](Fig/STEP3//Fig_DEG_example_ENSG00000167658_EEF2.pdf) [ENSG00000167851_CD300A](Fig/STEP3//Fig_DEG_example_ENSG00000167851_CD300A.pdf) [ENSG00000167996_FTH1](Fig/STEP3//Fig_DEG_example_ENSG00000167996_FTH1.pdf) [ENSG00000168028_RPSA](Fig/STEP3//Fig_DEG_example_ENSG00000168028_RPSA.pdf) [ENSG00000168061_SAC3D1](Fig/STEP3//Fig_DEG_example_ENSG00000168061_SAC3D1.pdf) [ENSG00000168209_DDIT4](Fig/STEP3//Fig_DEG_example_ENSG00000168209_DDIT4.pdf) [ENSG00000168685_IL7R](Fig/STEP3//Fig_DEG_example_ENSG00000168685_IL7R.pdf) [ENSG00000169100_SLC25A6](Fig/STEP3//Fig_DEG_example_ENSG00000169100_SLC25A6.pdf) [ENSG00000169220_RGS14](Fig/STEP3//Fig_DEG_example_ENSG00000169220_RGS14.pdf) [ENSG00000169756_LIMS1](Fig/STEP3//Fig_DEG_example_ENSG00000169756_LIMS1.pdf) [ENSG00000170379_TCAF2](Fig/STEP3//Fig_DEG_example_ENSG00000170379_TCAF2.pdf) [ENSG00000170915_PAQR8](Fig/STEP3//Fig_DEG_example_ENSG00000170915_PAQR8.pdf) [ENSG00000171241_SHCBP1](Fig/STEP3//Fig_DEG_example_ENSG00000171241_SHCBP1.pdf) [ENSG00000171863_RPS7](Fig/STEP3//Fig_DEG_example_ENSG00000171863_RPS7.pdf) [ENSG00000172586_CHCHD1](Fig/STEP3//Fig_DEG_example_ENSG00000172586_CHCHD1.pdf) [ENSG00000172977_KAT5](Fig/STEP3//Fig_DEG_example_ENSG00000172977_KAT5.pdf) [ENSG00000173207_CKS1B](Fig/STEP3//Fig_DEG_example_ENSG00000173207_CKS1B.pdf) [ENSG00000173812_EIF1](Fig/STEP3//Fig_DEG_example_ENSG00000173812_EIF1.pdf) [ENSG00000174444_RPL4](Fig/STEP3//Fig_DEG_example_ENSG00000174444_RPL4.pdf) [ENSG00000174500_GCSAM](Fig/STEP3//Fig_DEG_example_ENSG00000174500_GCSAM.pdf) [ENSG00000174748_RPL15](Fig/STEP3//Fig_DEG_example_ENSG00000174748_RPL15.pdf) [ENSG00000175166_PSMD2](Fig/STEP3//Fig_DEG_example_ENSG00000175166_PSMD2.pdf) [ENSG00000175334_BANF1](Fig/STEP3//Fig_DEG_example_ENSG00000175334_BANF1.pdf) [ENSG00000175390_EIF3F](Fig/STEP3//Fig_DEG_example_ENSG00000175390_EIF3F.pdf) [ENSG00000175463_TBC1D10C](Fig/STEP3//Fig_DEG_example_ENSG00000175463_TBC1D10C.pdf) [ENSG00000177721_ANXA2R](Fig/STEP3//Fig_DEG_example_ENSG00000177721_ANXA2R.pdf) [ENSG00000178896_EXOSC4](Fig/STEP3//Fig_DEG_example_ENSG00000178896_EXOSC4.pdf) [ENSG00000178977_LINC00324](Fig/STEP3//Fig_DEG_example_ENSG00000178977_LINC00324.pdf) [ENSG00000179144_GIMAP7](Fig/STEP3//Fig_DEG_example_ENSG00000179144_GIMAP7.pdf) [ENSG00000179933_C14orf119](Fig/STEP3//Fig_DEG_example_ENSG00000179933_C14orf119.pdf) [ENSG00000179950_PUF60](Fig/STEP3//Fig_DEG_example_ENSG00000179950_PUF60.pdf) [ENSG00000180573_HIST1H2AC](Fig/STEP3//Fig_DEG_example_ENSG00000180573_HIST1H2AC.pdf) [ENSG00000180628_PCGF5](Fig/STEP3//Fig_DEG_example_ENSG00000180628_PCGF5.pdf) [ENSG00000180644_PRF1](Fig/STEP3//Fig_DEG_example_ENSG00000180644_PRF1.pdf) [ENSG00000181163_NPM1](Fig/STEP3//Fig_DEG_example_ENSG00000181163_NPM1.pdf) [ENSG00000181847_TIGIT](Fig/STEP3//Fig_DEG_example_ENSG00000181847_TIGIT.pdf) [ENSG00000181896_ZNF101](Fig/STEP3//Fig_DEG_example_ENSG00000181896_ZNF101.pdf) [ENSG00000182149_IST1](Fig/STEP3//Fig_DEG_example_ENSG00000182149_IST1.pdf) [ENSG00000182718_ANXA2](Fig/STEP3//Fig_DEG_example_ENSG00000182718_ANXA2.pdf) [ENSG00000183813_CCR4](Fig/STEP3//Fig_DEG_example_ENSG00000183813_CCR4.pdf) [ENSG00000183978_COA3](Fig/STEP3//Fig_DEG_example_ENSG00000183978_COA3.pdf) [ENSG00000184009_ACTG1](Fig/STEP3//Fig_DEG_example_ENSG00000184009_ACTG1.pdf) [ENSG00000184432_COPB2](Fig/STEP3//Fig_DEG_example_ENSG00000184432_COPB2.pdf) [ENSG00000184939_ZFP90](Fig/STEP3//Fig_DEG_example_ENSG00000184939_ZFP90.pdf) [ENSG00000185338_SOCS1](Fig/STEP3//Fig_DEG_example_ENSG00000185338_SOCS1.pdf) [ENSG00000187257_RSBN1L](Fig/STEP3//Fig_DEG_example_ENSG00000187257_RSBN1L.pdf) [ENSG00000187514_PTMA](Fig/STEP3//Fig_DEG_example_ENSG00000187514_PTMA.pdf) [ENSG00000188846_RPL14](Fig/STEP3//Fig_DEG_example_ENSG00000188846_RPL14.pdf) [ENSG00000189067_LITAF](Fig/STEP3//Fig_DEG_example_ENSG00000189067_LITAF.pdf) [ENSG00000196230_TUBB](Fig/STEP3//Fig_DEG_example_ENSG00000196230_TUBB.pdf) [ENSG00000196329_GIMAP5](Fig/STEP3//Fig_DEG_example_ENSG00000196329_GIMAP5.pdf) [ENSG00000196531_NACA](Fig/STEP3//Fig_DEG_example_ENSG00000196531_NACA.pdf) [ENSG00000197111_PCBP2](Fig/STEP3//Fig_DEG_example_ENSG00000197111_PCBP2.pdf) [ENSG00000197329_PELI1](Fig/STEP3//Fig_DEG_example_ENSG00000197329_PELI1.pdf) [ENSG00000197471_SPN](Fig/STEP3//Fig_DEG_example_ENSG00000197471_SPN.pdf) [ENSG00000197958_RPL12](Fig/STEP3//Fig_DEG_example_ENSG00000197958_RPL12.pdf) [ENSG00000198034_RPS4X](Fig/STEP3//Fig_DEG_example_ENSG00000198034_RPS4X.pdf) [ENSG00000198242_RPL23A](Fig/STEP3//Fig_DEG_example_ENSG00000198242_RPL23A.pdf) [ENSG00000198301_SDAD1](Fig/STEP3//Fig_DEG_example_ENSG00000198301_SDAD1.pdf) [ENSG00000198355_PIM3](Fig/STEP3//Fig_DEG_example_ENSG00000198355_PIM3.pdf) [ENSG00000198763_MT-ND2](Fig/STEP3//Fig_DEG_example_ENSG00000198763_MT-ND2.pdf) [ENSG00000198805_PNP](Fig/STEP3//Fig_DEG_example_ENSG00000198805_PNP.pdf) [ENSG00000198830_HMGN2](Fig/STEP3//Fig_DEG_example_ENSG00000198830_HMGN2.pdf) [ENSG00000198856_OSTC](Fig/STEP3//Fig_DEG_example_ENSG00000198856_OSTC.pdf) [ENSG00000198938_MT-CO3](Fig/STEP3//Fig_DEG_example_ENSG00000198938_MT-CO3.pdf) [ENSG00000203780_FANK1](Fig/STEP3//Fig_DEG_example_ENSG00000203780_FANK1.pdf) [ENSG00000204261_PSMB8-AS1](Fig/STEP3//Fig_DEG_example_ENSG00000204261_PSMB8-AS1.pdf) [ENSG00000204438_GPANK1](Fig/STEP3//Fig_DEG_example_ENSG00000204438_GPANK1.pdf) [ENSG00000204628_RACK1](Fig/STEP3//Fig_DEG_example_ENSG00000204628_RACK1.pdf) [ENSG00000204713_TRIM27](Fig/STEP3//Fig_DEG_example_ENSG00000204713_TRIM27.pdf) [ENSG00000211450_SELENOH](Fig/STEP3//Fig_DEG_example_ENSG00000211450_SELENOH.pdf) [ENSG00000211694_TRGV10](Fig/STEP3//Fig_DEG_example_ENSG00000211694_TRGV10.pdf) [ENSG00000211750_TRBV24-1](Fig/STEP3//Fig_DEG_example_ENSG00000211750_TRBV24-1.pdf) [ENSG00000211778_TRAV4](Fig/STEP3//Fig_DEG_example_ENSG00000211778_TRAV4.pdf) [ENSG00000211779_TRAV5](Fig/STEP3//Fig_DEG_example_ENSG00000211779_TRAV5.pdf) [ENSG00000211786_TRAV8-2](Fig/STEP3//Fig_DEG_example_ENSG00000211786_TRAV8-2.pdf) [ENSG00000211788_TRAV13-1](Fig/STEP3//Fig_DEG_example_ENSG00000211788_TRAV13-1.pdf) [ENSG00000211789_TRAV12-2](Fig/STEP3//Fig_DEG_example_ENSG00000211789_TRAV12-2.pdf) [ENSG00000211801_TRAV21](Fig/STEP3//Fig_DEG_example_ENSG00000211801_TRAV21.pdf) [ENSG00000211810_TRAV29DV5](Fig/STEP3//Fig_DEG_example_ENSG00000211810_TRAV29DV5.pdf) [ENSG00000211814_TRAV35](Fig/STEP3//Fig_DEG_example_ENSG00000211814_TRAV35.pdf) [ENSG00000211817_TRAV38-2DV8](Fig/STEP3//Fig_DEG_example_ENSG00000211817_TRAV38-2DV8.pdf) [ENSG00000213203_GIMAP1](Fig/STEP3//Fig_DEG_example_ENSG00000213203_GIMAP1.pdf) [ENSG00000213626_LBH](Fig/STEP3//Fig_DEG_example_ENSG00000213626_LBH.pdf) [ENSG00000213658_LAT](Fig/STEP3//Fig_DEG_example_ENSG00000213658_LAT.pdf) [ENSG00000221869_CEBPD](Fig/STEP3//Fig_DEG_example_ENSG00000221869_CEBPD.pdf) [ENSG00000232956_SNHG15](Fig/STEP3//Fig_DEG_example_ENSG00000232956_SNHG15.pdf) [ENSG00000234745_HLA-B](Fig/STEP3//Fig_DEG_example_ENSG00000234745_HLA-B.pdf) [ENSG00000235532_LINC00402](Fig/STEP3//Fig_DEG_example_ENSG00000235532_LINC00402.pdf) [ENSG00000241657_TRBV11-2](Fig/STEP3//Fig_DEG_example_ENSG00000241657_TRBV11-2.pdf) [ENSG00000243927_MRPS6](Fig/STEP3//Fig_DEG_example_ENSG00000243927_MRPS6.pdf) [ENSG00000257599_OVCH1-AS1](Fig/STEP3//Fig_DEG_example_ENSG00000257599_OVCH1-AS1.pdf) [ENSG00000274752_TRBV12-3](Fig/STEP3//Fig_DEG_example_ENSG00000274752_TRBV12-3.pdf) [ENSG00000277734_TRAC](Fig/STEP3//Fig_DEG_example_ENSG00000277734_TRAC.pdf) [ENSG00000278030_TRBV7-9](Fig/STEP3//Fig_DEG_example_ENSG00000278030_TRBV7-9.pdf) [TIGIT_TIGIT](Fig/STEP3//Fig_DEG_example_TIGIT_TIGIT.pdf) 
+
+### Additional genes/proteins
+
+
+```r
+.add <- c("CD279","PDCD1","LAG3","CD223","HAVCR2","TIM3","CD366","TOX","TOX2")
+
+additional.genes <-
+    hc.ms.deg[hgnc_symbol %in% .add, .(gene)] %>%
+    unique() %>%
+    unlist(use.names=F)
+```
+
+[CD279_CD279](Fig/STEP3//Fig_DEG_example_CD279_CD279.pdf) [CD366_CD366](Fig/STEP3//Fig_DEG_example_CD366_CD366.pdf) [ENSG00000089692_LAG3](Fig/STEP3//Fig_DEG_example_ENSG00000089692_LAG3.pdf) [ENSG00000124191_TOX2](Fig/STEP3//Fig_DEG_example_ENSG00000124191_TOX2.pdf) [ENSG00000135077_HAVCR2](Fig/STEP3//Fig_DEG_example_ENSG00000135077_HAVCR2.pdf) [ENSG00000188389_PDCD1](Fig/STEP3//Fig_DEG_example_ENSG00000188389_PDCD1.pdf) [ENSG00000198846_TOX](Fig/STEP3//Fig_DEG_example_ENSG00000198846_TOX.pdf) 
+
+### Appendix: PRDM1 short vs. long
+
+
+```r
+.total.cols <- fread(.deg.data$col, col.names = "tag", header=F)
+
+## 1. Write down PRDM1 short and long as .mtx
+.hdr <- "result/step3/deg/prdm1_hc_ms"
+if.needed(fileset.list(.hdr), {
+
+    .dt <- fread("data/PRDM1/PRDM1_SL.csv.gz")
+    .dt[, tag := barcode %&% "-1" %&% "_" %&% `batch`]
+
+    .out <- .dt[(PRDM1_short + PRDM1_long > 0) &
+                `tag` %in% .total.cols$tag,
+                .(tag, PRDM1_short, PRDM1_long)]
+
+    .mat <- .out[, .(PRDM1_short, PRDM1_long)] %>%
+        as.matrix() %>%
+        t() %>% 
+        Matrix::Matrix(sparse=TRUE)
+
+    mmutilR::write.sparse(.mat,
+                          c("PRDM1_short", "PRDM1_long"),
+                          .out$tag,
+                          .hdr)
+})
+
+
+prdm1.data <- fileset.list(.hdr)
+
+.file <- "result/step3/deg/prdm1_hc_ms.rds"
+
+if.needed(.file, {
+
+    .pca <- rcpp_mmutil_svd(mtx_file = .deg.data$mtx,
+                            RANK = 15,
+                            TAKE_LN = T)
+
+    .prdm1.cols <- fread(prdm1.data$col, col.names = "tag", header=F)
+
+    V <- .pca$V[match(.prdm1.cols$tag, .total.cols$tag),
+              , drop = F]
+
+    .prdm1.cols[, c("barcode", "batch") := tstrsplit(`tag`, split="_")]
+    .prdm1.cols[, barcode := gsub(pattern="-1", replacement = "", `barcode`)]
+    .prdm1.cols[, batch := as.integer(batch)]
+
+    .matched <- .prdm1.cols %>%
+        left_join(annot.dt) %>% 
+        left_join(.hash.info)
+
+    .stat <- rcpp_mmutil_aggregate(mtx_file = prdm1.data$mtx, 
+                                   row_file = prdm1.data$row,
+                                   col_file = prdm1.data$col, 
+                                   r_cols = .matched$tag,
+                                   r_indv = .matched$subject,
+                                   r_annot = .matched$celltype,
+                                   r_lab_name = c("mTreg","mTconv","nTreg","nTconv"),
+                                   r_trt = .matched$disease,
+                                   r_V = V, knn = 50, IMPUTE_BY_KNN = T,
+                                   NUM_THREADS = 16)
+
+    saveRDS(.stat, .file)
+})
+
+.deg.stat <- readRDS(.file)
+
+.cts <- unique(annot.dt$celltype)
+.indvs <- unique(annot.dt$subject)
+
+.hc.ms.dt <-
+    list(tot = sort.col(.deg.stat$sum, .cts, .indvs),
+         cfa = sort.col(.deg.stat$resid.ln.mu, .cts, .indvs),
+         cfa.sd = sort.col(.deg.stat$resid.ln.mu.sd, .cts, .indvs)) %>%
+    combine.statistics()
+
+.hc.ms.dt[, c("subject","celltype") := tstrsplit(`Var2`,split="_")]
+.hc.ms.dt[, disease := substr(`subject`,1,2)]
+.hc.ms.dt[, gene := `Var1`]
+.hc.ms.dt[, `Var1` := NULL]
+.hc.ms.dt[, `Var2` := NULL]
+
+hc.ms.deg <- summarize.deg(.hc.ms.dt)
+```
+
+
+![](Fig/STEP3/Fig_SL_DEG_PRDM1_long-1.png)<!-- -->
+
+[PDF](Fig/STEP3//Fig_SL_DEG_PRDM1_long.pdf)
+
+
+![](Fig/STEP3/Fig_SL_DEG_PRDM1_short-1.png)<!-- -->
+
+[PDF](Fig/STEP3//Fig_SL_DEG_PRDM1_short.pdf)
+
