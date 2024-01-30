@@ -508,7 +508,7 @@ if.needed(.file, {
 .size <- .bbknn.umap[, .(.N), by = .(membership)]
 
 .bbknn.umap <-
-    .size[N > 0, .(membership)] %>%
+    .size[N > 1300, .(membership)] %>%
     left_join(.bbknn.umap, by = "membership") %>%
     filter(`d` < 2.2) %>%
     as.data.table()
@@ -586,8 +586,6 @@ print(plt)
 
 * `r length(unique(.argmax$membership))` modules
 
-* Remove clusters with too few cells (`N` $<$ 100) and retain `r nrow(.argmax[N > 100])` clusters
-
 ```{r}
 .argmax[, `N.overlap` := `N`]
 .argmax[, `N` := NULL]
@@ -652,7 +650,7 @@ print(plt)
 .bbknn.umap[, x := scale(umap1)]
 .bbknn.umap[, y := scale(umap2)]
 .bbknn.umap[, d := sqrt(x^2 + y^2)]
-.bbknn.umap <- .bbknn.umap[`d` < 2.2 & `N` > 100]
+.bbknn.umap <- .bbknn.umap[`d` < 2.2 & `N` > 1300]
 
 p1 <-
     .gg.plot(.bbknn.umap[sample(.N)], aes(umap1, umap2, color=membership)) +
@@ -747,12 +745,20 @@ if.needed(.marker.data, {
 .ct <- c("mTreg","nTreg","mTconv","nTconv")
 .markers <- readLines(.marker.data$row)
 
+.temp <- copy(celltype.final)
+.temp[, membership := as.factor(`membership`)]
+.temp[, x := scale(umap1)]
+.temp[, y := scale(umap2)]
+.temp[, d := sqrt(x^2 + y^2)]
+.temp <- .temp[`d` < 2.2 & `N` > 1300,
+               .(tag, umap1, umap2, celltype)]
+
 marker.dt <-
     t(read.dense(.marker.data$mtx)) %>%
     (function(x) { colnames(x) <- .markers; x }) %>%
     as.data.table() %>%
     mutate(tag = .tags) %>%
-    left_join(celltype.final[, .(tag, umap1, umap2, celltype)], by = "tag") %>%
+    left_join(.temp, by = "tag") %>%
     na.omit() %>%
     as.data.table() %>%
     melt(id.vars = c("tag", "umap1", "umap2","celltype"),
@@ -762,6 +768,7 @@ marker.dt <-
     as.data.table
 
 plot.marker.umap <- function(.marker) {
+
     .dt <- marker.dt[marker == .marker]
     ## handle outliers for better visualization
     .cutoff <- quantile(.dt$expr, probs = .95, na.rm=TRUE)
@@ -973,7 +980,7 @@ prdm.thm <-
           legend.text = element_text(size=5))
 ```
 
-```{r Fig_PRDM1_isoform_umap, fig.width=7, fig.height=3}
+```{r incldue = FALSE}
 prdm.dt <- fread("data/PRDM1/PRDM1_SL.csv.gz")
 
 .dt <-
@@ -982,6 +989,14 @@ prdm.dt <- fread("data/PRDM1/PRDM1_SL.csv.gz")
     na.omit() %>%
     as.data.table()
 
+.dt[, membership := as.factor(`membership`)]
+.dt[, x := scale(umap1)]
+.dt[, y := scale(umap2)]
+.dt[, d := sqrt(x^2 + y^2)]
+.dt <- .dt[`d` < 2.2 & `N` > 1300]
+```
+
+```{r Fig_PRDM1_isoform_umap, fig.width=7, fig.height=3}
 .aes <- aes(umap1, umap2, colour=pmin(PRDM1_short, 3))
 
 p1 <-
@@ -1018,6 +1033,12 @@ print(plt)
     mutate(batch=as.integer(batch)) %>%
     left_join(.hash.info) %>%
     na.omit()
+
+.dt[, membership := as.factor(`membership`)]
+.dt[, x := scale(umap1)]
+.dt[, y := scale(umap2)]
+.dt[, d := sqrt(x^2 + y^2)]
+.dt <- .dt[`d` < 2.2 & `N` > 1300]
 ```
 
 ```{r Fig_bbknn_full_batch, fig.width=8, fig.height=6}

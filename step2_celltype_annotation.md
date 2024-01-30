@@ -1,6 +1,6 @@
 ---
 title: "Step 2: cell type annotation"
-date: "2024-01-24"
+date: "2024-01-29"
 author: Yongjin Park
 bibliography: "MS_Ref.bib"
 output:
@@ -393,7 +393,7 @@ if.needed(.file, {
 .size <- .bbknn.umap[, .(.N), by = .(membership)]
 
 .bbknn.umap <-
-    .size[N > 0, .(membership)] %>%
+    .size[N > 1300, .(membership)] %>%
     left_join(.bbknn.umap, by = "membership") %>%
     filter(`d` < 2.2) %>%
     as.data.table()
@@ -469,8 +469,6 @@ print(plt)
 
 * 43 modules
 
-* Remove clusters with too few cells (`N` $<$ 100) and retain 36 clusters
-
 
 ```r
 .argmax[, `N.overlap` := `N`]
@@ -537,7 +535,7 @@ print(plt)
 .bbknn.umap[, x := scale(umap1)]
 .bbknn.umap[, y := scale(umap2)]
 .bbknn.umap[, d := sqrt(x^2 + y^2)]
-.bbknn.umap <- .bbknn.umap[`d` < 2.2 & `N` > 100]
+.bbknn.umap <- .bbknn.umap[`d` < 2.2 & `N` > 1300]
 
 p1 <-
     .gg.plot(.bbknn.umap[sample(.N)], aes(umap1, umap2, color=membership)) +
@@ -870,6 +868,15 @@ prdm.dt <- fread("data/PRDM1/PRDM1_SL.csv.gz")
     na.omit() %>%
     as.data.table()
 
+.dt[, membership := as.factor(`membership`)]
+.dt[, x := scale(umap1)]
+.dt[, y := scale(umap2)]
+.dt[, d := sqrt(x^2 + y^2)]
+.dt <- .dt[`d` < 2.2 & `N` > 1300]
+```
+
+
+```r
 .aes <- aes(umap1, umap2, colour=pmin(PRDM1_short, 3))
 
 p1 <-
