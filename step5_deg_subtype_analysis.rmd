@@ -514,7 +514,7 @@ plt <-
 
 print(plt)
 .file <- fig.dir %&% "/Fig_mtreg_DEG_count.pdf"
-.gg.save(filename = .file, plot = plt, width=3, height=2)
+## .gg.save(filename = .file, plot = plt, width=3, height=2)
 ```
 
 
@@ -542,7 +542,7 @@ for(g in .genes.show){
     .file <- fig.dir %&% "/Fig_mTreg_DEG_example_" %&% g %&% ".pdf"
     if.needed(.file, {
         plt <- show.each.gene(g, .hc.ms.dt, hc.ms.deg)
-        .gg.save(filename=.file, cat.link=FALSE, plot=plt, width=6.5, height=3)
+        .gg.save(filename=.file, cat.link=FALSE, plot=plt, width=5.5, height=3)
     })
     cat("[" %&% g %&% "](" %&% .file %&% ") ")
 }
