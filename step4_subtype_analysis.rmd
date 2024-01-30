@@ -123,7 +123,8 @@ take.marker.stats <- function(x, dict){
 
 ```{r}
 .markers <-
-    c("CCR4","CCR6","CXCR3","CXCR5",
+    c("CD3", "CD3E", "CD14", "LYZ",
+      "CCR4","CCR6","CXCR3","CXCR5",
       "ABCA1","GBP4","CDCA7L","ITM2C","NR1D1",
       "CTSH","GATA3","FHIT","CD40LG","C1orf162",
       "MGATA4A","GZMK","IFNGR2",
@@ -287,6 +288,9 @@ plt <-
     scale_color_manual(values = .cols, guide="none")
 
 print(plt)
+```
+
+```{r results="asis", echo = F}
 .file <- fig.dir %&% "/Fig_bbknn_mtconv.pdf"
 .gg.save(filename = .file, plot = plt, width=3, height=3)
 ```
@@ -300,6 +304,9 @@ plt <-
     scale_color_manual(values = .cols, guide="none")
 
 print(plt)
+```
+
+```{r results="asis", echo = F}
 .file <- fig.dir %&% "/Fig_bbknn_mtconv_sub.pdf"
 .gg.save(filename = .file, plot = plt, width=3, height=3)
 ```
@@ -368,7 +375,7 @@ print(plt)
 
 **NOTE** The colors are standardized `log1p` expression across genes and cells.
 
-```{r Fig_mtconv_gene_umap, fig.width=3, fig.height=2.5}
+```{r Fig_mtconv_gene_umap, fig.width=3, fig.height=2.5, results="asis"}
 for(g in unique(x.melt$gene)) {
     .dt <- left_join(x.melt[gene == g], .cells)
     .aes <- aes(umap1, umap2, color=pmax(pmin(x, 3), -3))
@@ -458,7 +465,6 @@ print(plt)
 .gg.save(filename = .file, plot = plt, height=3, width=2.2)
 ```
 
-
 ## 2. Memory Treg cells
 
 ```{r take_subset_mtreg}
@@ -531,6 +537,17 @@ if.needed(.file, {
            umap1, umap2, disease)
 ```
 
+### Merge clusters 3 and 6
+
+We merged the clusters \#3 and \#6 since they show similar gene expression patterns for known marker genes. Merge cells in the cluster \#6 to \#3.
+
+```{r}
+.bbknn.umap[membership == 6, membership := 3]
+.bbknn.umap[, membership := factor(membership, 1:5)]
+.cells[membership == 6, membership := 3]
+.cells[, membership := factor(membership, 1:5)]
+```
+
 ```{r echo = F, results = "asis"}
 .file <- "Tab/step4_mtreg_cluster.txt.gz"
 .mkdir("Tab/")
@@ -565,7 +582,9 @@ cat("[**DOWNLOAD:** mTreg marker gene statistics]("%&% .file %&% ")\n\n")
     .cells[,
            .(umap1=median(umap1), umap2=median(umap2)),
            by = .(membership)]
+
 .cols <- .more.colors(nrow(.lab), nc.pal=12)
+
 plt <-
     .gg.plot(.bbknn.umap, aes(umap1, umap2, color=membership)) +
     xlab("UMAP1") + ylab("UMAP2") +
@@ -574,6 +593,7 @@ plt <-
     scale_color_manual(values = .cols, guide="none")
 
 print(plt)
+
 .file <- fig.dir %&% "/Fig_bbknn_mtreg.pdf"
 .gg.save(filename = .file, plot = plt, width=3, height=3)
 ```
@@ -654,7 +674,8 @@ print(plt)
 **NOTE** The colors are standardized `log1p` expression across genes and cells.
 
 ```{r Fig_mtreg_gene_umap, fig.width=3, fig.height=2.5}
-for(g in unique(x.melt$gene)) {
+.genes <- unique(x.melt$gene)
+for(g in .genes) {
     .dt <- left_join(x.melt[gene == g], .cells)
     .aes <- aes(umap1, umap2, color=pmax(pmin(x, 3), -3))
 
@@ -726,7 +747,7 @@ for(g in unique(x.melt$gene)) {
         ggtitle(g)
 
     print(plt)
-    .file <- fig.dir %&% "/Fig_mtreg_gene_umap" %&% g %&% ".pdf"
+    .file <- fig.dir %&% "/Fig_mtreg_gene_umap_" %&% g %&% ".pdf"
     .gg.save(filename = .file, plot = plt, width=3, height=2.5)
 }
 ```
@@ -793,4 +814,3 @@ print(plt)
 
 top.stat <- .stat[gene %in% .top.markers$gene]
 ```
-
