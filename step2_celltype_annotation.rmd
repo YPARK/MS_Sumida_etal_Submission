@@ -10,8 +10,8 @@ output:
     self_contained: true
 ---
 
+
 ```{r GlobOpt, include = FALSE}
-################################################################
 fig.dir = 'Fig/STEP2/'
 dir.create(fig.dir, recursive = TRUE, showWarnings = FALSE)
 knitr::opts_knit$set(eval.after = 'fig.cap')
@@ -23,76 +23,12 @@ library(data.table)
 library(dplyr)
 library(patchwork)
 library(mmutilR)
+library(Matrix)
 source("Util-rmd.R")
 source("Util-alg.R")
 .fread <- function(...) fread(..., header=FALSE)
 .fwrite <- function(...) fwrite(..., quote=FALSE, sep="\t", row.names = FALSE, col.names = FALSE)
 ```
-
-```{r include=FALSE}
-plt.scatter.ct.2 <- function(.ct.show, .assign.tab, .mtx,
-                             m1x = "CD25",
-                             m1y = "CD127",
-                             m2x = "CD45RO",
-                             m2y = "CD45RA") {
-
-    .idx <- data.table(tag = colnames(.mtx)) %>%
-        mutate(j = 1:n()) %>%
-        left_join(.assign.tab[as.character(celltype) %in% .ct.show]) %>%
-        select(j, celltype, prob)
-
-    .dt <- data.table(m1x = .mtx[m1x, .idx$j],
-                      m1y = .mtx[m1y, .idx$j],
-                      m2x = .mtx[m2x, .idx$j],
-                      m2y = .mtx[m2y, .idx$j],
-                      prob = .idx$prob,
-                      celltype = factor(.idx$celltype, .ct.show))
-    .dt <- .dt[celltype %in% .ct.show]
-    .med.dt <-
-        .dt[m1x > 0 &
-            m2x > 0 &
-            m1y > 0 &
-            m2y > 0,
-            .(m1x = median(m1x),
-                m1y = median(m1y),
-                m2x = median(m2x),
-                m2y = median(m2y)),
-            by = .(celltype)]
-
-    .add.lab <- function(.plt) {
-
-        .lab <- function(x) num.int(10^x)
-        .brk <- seq(0,5)
-
-        .plt +
-            theme_classic() +
-            theme(axis.text = element_text(size=6)) +
-            scale_x_continuous(breaks=.brk, labels=.lab, limits=c(-.1,3.2)) +
-            scale_y_continuous(breaks=.brk, labels=.lab, limits=c(-.1,3.2)) +
-            theme(axis.text.x = element_text(angle=90, vjust=1, hjust=1)) +
-            facet_grid(.~celltype) +
-            stat_density_2d(geom = "raster",
-                            aes(fill = after_stat(density)),
-                            show.legend=F,
-                            contour=F) +
-            scale_fill_viridis_c() +
-            stat_density2d(linewidth=.2, colour="white") +
-            geom_point(data=.med.dt, colour=2, pch=3, size=1, stroke=1) +
-            geom_abline(slope=1, linewidth=.2, colour="white")
-    }
-    .aes <- aes(x=log10(m1x), y=log10(m1y))
-    p1 <- (ggplot(.dt[m1x > 0 & m1y > 0], .aes) %>% .add.lab) +
-        xlab(m1x) + ylab(m1y)
-    .aes <- aes(x=log10(m2x), y=log10(m2y))
-    p2 <- (ggplot(.dt[m2x > 0 & m2y > 0], .aes) %>% .add.lab) +
-        xlab(m2x) + ylab(m2y)
-    p1/p2
-}
-```
-
-# Round 1: Top-level cell type annotation
-
-## Can we distinguish cell types by surface proteins?
 
 ```{r echo = FALSE}
 .read.marker.file <- function(.file){
@@ -101,110 +37,49 @@ plt.scatter.ct.2 <- function(.ct.show, .assign.tab, .mtx,
     .ret <- .xx$feat; names(.ret) <- .xx$ct;
     .ret
 }
+take.batch.info <- function(.data){
+    fread(.data$col, header = F, col.names = "tag") %>%
+        parse.tag() %>%
+        select(batch) %>%
+        unlist()
+}
 ```
 
-```{r select_proteins_only, echo = FALSE}
-.pos.markers <- .read.marker.file("marker/surface_round1_positive.txt")
-.neg.markers <- .read.marker.file("marker/surface_round1_negative.txt")
-.markers <- unique(c(unlist(.pos.markers), unlist(.neg.markers)))
+## 1. Another round of data Q/C to identify trouble some cells and adjust batch effects
 
+We will use full data matrix processed in the previous step.
+
+```{r}
 .hdr <- "result/step1/matrix_final"
 .data <- fileset.list(.hdr)
+```
 
-.mkdir("result/step2")
-.prot.hdr <- "result/step2/prot"
-.prot.data <- fileset.list(.prot.hdr)
-
-if.needed(.prot.data, {
-
-    .prot.data <-
+```{r read_hash_data}
+.features <- readLines(.data$row)
+.hash <- .features[str_detect(.features, "Hash")]
+.hash.hdr <- "result/step1/hash"
+.hash.data <- fileset.list(.hash.hdr)
+if.needed(.hash.data, {
+    .hash.data <-
         rcpp_mmutil_copy_selected_rows(.data$mtx,
                                        .data$row,
                                        .data$col,
-                                       .markers,
-                                       .prot.hdr)
+                                       .hash,
+                                       .hash.hdr)
 })
+.hash.info <- read.hash(.hash.data)
 ```
 
-* nTconv : CD3+, CD4+, CD8-, CD25-/CD127+, CD45RA+/CD45RO-
-* mTconv : CD3+, CD4+, CD8-, CD25-/CD127+, CD45RA-/CD45RO+
-* nTreg : CD3+, CD4+, CD8-, CD25+/CD127-, CD45RA+/CD45RO-
-* mTreg : CD3+, CD4+, CD8-, CD25+/CD127-, CD45RA-/CD45RO+
+### A. Identify principal components in protein surface marker and gene expression data
 
-Run annotation purely based on marker proteins:
+#### Partition the data by the types of features
 
-```{r run_annotation_bbknn_adjusted}
-.file <- "result/step2/prot_annot.txt.gz"
-
-if.needed(.file, {
-
-    .pos.markers <- .read.marker.file("marker/surface_round1_positive.txt")
-    .neg.markers <- .read.marker.file("marker/surface_round1_negative.txt")
-
-    .annot.out <-
-        rcpp_mmutil_annotate_columns(
-            pos_labels = list(p1=.pos.markers),
-            r_neg_labels = list(n1=.neg.markers),
-            mtx_file = .prot.data$mtx,
-            row_file = .prot.data$row,
-            col_file = .prot.data$col,
-            EM_TOL = 1e-6,
-            EM_ITER = 500,
-            TAKE_LN = T)
-
-    annot.dt <- setDT(.annot.out$annotation)
-    .col <- c("tag", "celltype", "prob", "ln.prob")
-    names(annot.dt) <- .col
-    annot.dt[, c("barcode","batch") := tstrsplit(tag, split="_")]
-    fwrite(annot.dt, .file)
-})
-
-annot.dt <- fread(.file)
-```
-
-Two-dimensional density plot on the raw CD marker concentrations.
-
-```{r Fig_round1_cdmarker, fig.width=6, fig.height=5}
-prot.raw.mtx <- read.dense(.prot.data$mtx)
-.names <- sapply(readLines(.prot.data$row),
-                 function(s) unlist(strsplit(s, split="[_]+"))[1],
-                 USE.NAMES = F)
-
-rownames(prot.raw.mtx) <- .names
-colnames(prot.raw.mtx) <- readLines(.prot.data$col)
-
-.melt <-
-    reshape2::melt(prot.raw.mtx) %>%
-    filter(!str_detect(`Var1`, "Hashtag")) %>%
-    as.data.table()
-
-.sum <- .melt[,
-              .(value = sum(value)),
-              by = .(Var1, Var2)]
-
-## collapse the same feature names
-.dt <-
-    dcast(.sum, Var1 ~ Var2, value.var = "value", fill = 0)
-
-prot.raw.mtx <- as.matrix(.dt[, -1])
-rownames(prot.raw.mtx) <- unlist(.dt[, 1])
-
-.ct <- c("mTreg","nTreg","mTconv","nTconv")
-plt <- plt.scatter.ct.2(.ct, annot.dt, prot.raw.mtx)
-print(plt)
-```
-
-```{r results="asis", echo=F}
-.file <- fig.dir %&% "/Fig_round1_cdmarker.pdf"
-.gg.save(filename = .file, plot = plt, width=6, height=5)
-```
-
-## Will the same classification results hold in transcriptomic data?
-
-```{r select_genes_only, echo = FALSE}
+```{r include = F}
 .hdr <- "result/step1/matrix_final"
 .data <- fileset.list(.hdr)
+```
 
+```{r select_genes_only, echo = F}
 .mkdir("result/step2")
 .gene.hdr <- "result/step2/gene"
 .gene.data <- fileset.list(.gene.hdr)
@@ -225,207 +100,480 @@ if.needed(.gene.data, {
 })
 ```
 
-```{r hash_data}
-.features <- readLines(.data$row)
-.hash <- .features[str_detect(.features, "Hash")]
+```{r select_proteins_only, echo = F}
+.prot.hdr <- "result/step2/prot"
+.prot.data <- fileset.list(.prot.hdr)
 
-.hash.hdr <- "result/step1/hash"
-.hash.data <- fileset.list(.hash.hdr)
+if.needed(.prot.data, {
+    .proteins <-
+        .fread(.data$row, col.names="feat") %>%
+        filter(!str_starts(feat, "ENSG")) %>%
+        filter(!str_detect(feat, "_MT-")) %>%
+        unlist()
 
-if.needed(.hash.data, {
-    .hash.data <-
+    .prot.data <-
         rcpp_mmutil_copy_selected_rows(.data$mtx,
                                        .data$row,
                                        .data$col,
-                                       .hash,
-                                       .hash.hdr)
+                                       .proteins,
+                                       .prot.hdr)
 })
-
-.hash.mtx <- read.dense(.hash.data$mtx)
-.hash.argmax <- apply(.hash.mtx, 2, which.max)
-
-.hash.cells <- .hash.data$col %>%
-    fread(header=F, col.names="cell") %>%
-    (function(x) {
-        x[,c("barcode","batch"):=tstrsplit(`cell`,split="_")];
-        x[, barcode := gsub(`barcode`, pattern="-[0-9]$", replacement="")];
-        x[, hash := .hash.argmax]
-        x[, batch := as.integer(`batch`)]
-        return(x);
-    })
-
-.sample.info <-
-    readxl::read_xlsx("data/Hashing list MS Treg project.xlsx", 1) %>%
-    rename(Sample = `Cell type`) %>%
-    mutate(hash = gsub("#","",`hash`)) %>%
-    mutate(hash = as.integer(`hash`)) %>%
-    mutate(disease = substr(`subject`, 1, 2))
-
-.hash.info <-
-    left_join(.hash.cells, .sample.info)
 ```
 
+```{r do_gene_protein_svd}
+.file <- "result/step2/svd.rds"
 
-```{r run_bbknn_genes_only}
+if.needed(.file, {
+
+    gene.svd <- rcpp_mmutil_svd(.gene.data$mtx, RANK=30, TAKE_LN=T, NUM_THREADS = 16, EM_ITER = 20)
+
+    prot.svd <- rcpp_mmutil_svd(.prot.data$mtx, RANK=10, TAKE_LN=T, NUM_THREADS = 16, EM_ITER = 20)
+
+    .temp <- list(gene = gene.svd, protein = prot.svd)
+    saveRDS(.temp, .file)
+})
+.svd.list <- readRDS(.file)
+```
+
+#### Can we identify troublesome batch-specific principal components?
+
+```{r include = F}
+.plot.vd.fun <- function(k, VD){
+    .idx <- which(colnames(VD) %in% ("V" %&% (k:(k+1))))
+    .dt <-
+        VD[, ...idx] %>%
+        cbind(VD[, .(batch)])
+    colnames(.dt) <- c("x","y","batch")
+    .gg.plot(.dt[sample(.N)], aes(x, y, color=batch)) +
+        xlab("PC" %&% k) + ylab("PC" %&% (k+1)) +
+        ggrastr::rasterise(geom_point(stroke=0, size=.7), dpi=300) +
+        scale_color_brewer(palette = "Set3") +
+        theme(legend.position = c(1,1)) +
+        theme(legend.justification = c(1,1))
+}
+.pca.df <- function(.mat){
+    colnames(.mat) <- "V" %&% 1:ncol(.mat)
+    as.data.frame(.mat) %>%
+        rownames_to_column("tag") %>%
+        as.data.table() %>%
+        parse.tag() %>%
+        mutate(batch = as.factor(batch))
+}
+diagnostic.density.kmeans <- function(.data, .kmeans){
+    .scores <- rcpp_mmutil_compute_scores(.data$mtx, .data$row, .data$col)
+    col.scores <- setDT(.scores$col)
+
+    .dt <-
+        data.table(`name` = readLines(.data$col),
+                   k = as.factor(.kmeans$cluster)) %>%
+        left_join(col.scores)
+
+    p1 <-
+        .gg.plot(.dt, aes(log1p(nnz), color=k)) +
+        theme(legend.position = c(1,1)) +
+        theme(legend.justification = c(1,1)) +
+        geom_density()
+
+    p2 <-
+        .gg.plot(.dt, aes(log1p(`mean`), color=k)) +
+        theme(legend.position = c(1,1)) +
+        theme(legend.justification = c(1,1)) +
+        geom_density()
+
+    p3 <-
+        .gg.plot(.dt, aes(log1p(`cv`), color=k)) +
+        theme(legend.position = c(1,1)) +
+        theme(legend.justification = c(1,1)) +
+        geom_density()
+
+    plt <- wrap_plots(p1, p2, p3, nrow = 1)
+}
+```
+
+##### Show PCs computed on surface protein data
+
+```{r Fig_protein_PC, fig.width=9, fig.height=9}
+V <- .svd.list$protein$V; rownames(V) <- readLines(.prot.data$col)
+plots <- lapply(1:9, .plot.vd.fun, VD = .pca.df(V))
+plt <- wrap_plots(plots, ncol = 3)
+print(plt)
+```
+
+* We can adjust systemic batch-specific effects by batch-balancing k-nearest neighbour method. This shouldn't be much trouble.
+
+##### Adjust batch-specific effects on the protein side
+
+```{r protein_bbknn}
+.file <- "result/step2/prot_bbknn.rds"
+
+if.needed(.file, {
+
+    V <- .svd.list$protein$V
+    .batches <- take.batch.info(.prot.data)
+
+    .bbknn.prot <-
+        rcpp_mmutil_bbknn(V,
+                          r_batches = .batches, # batch label
+                          knn = 50,             # 10 nn per batch
+                          RECIPROCAL_MATCH = T, # crucial
+                          NUM_THREADS = 16)
+
+    saveRDS(.bbknn.prot, .file)
+})
+
+.bbknn.prot <- readRDS(.file)
+```
+
+```{r Fig_protein_PC_adj, fig.width=9, fig.height=9}
+V <- .bbknn.prot$factors.adjusted; rownames(V) <- readLines(.prot.data$col)
+plots <- lapply(1:9, .plot.vd.fun, VD = .pca.df(V))
+plt <- wrap_plots(plots, ncol = 3)
+print(plt)
+```
+
+##### Show PCs computed on gene expression data
+
+```{r Fig_gene_PC, fig.width=9, fig.height=9}
+V <- .svd.list$gene$V; rownames(V) <- readLines(.gene.data$col)
+plots <- lapply(1:9, .plot.vd.fun, VD = .pca.df(V))
+plt <- wrap_plots(plots, ncol = 3)
+print(plt)
+```
+
+* We found strong bimodal distributions for the first five PCs in gene expression data.
+
+```{r Fig_gene_pc_bimodal, fig.width=8, fig.height=2}
+par(mfrow=c(1,5))
+for(k in 1:5){
+    hist(.svd.list$gene$V[,k], 100, main = "PC" %&% k, xlab="")
+}
+```
+
+##### Identify outlier cells in gene expression data
+
+```{r select_cells_excluding_outliers}
+set.seed(1)
+.kmeans <- kmeans(.svd.list$gene$V[, 1:5], 2, nstart = 100)
+k.select <- which.max(table(.kmeans$cluster))
+.qc.cells <- readLines(.gene.data$col)[.kmeans$cluster == k.select]
+```
+
+```{r Fig_gene_PC_kmeans, fig.width=9, fig.height=9}
+V <- .svd.list$gene$V; rownames(V) <- readLines(.gene.data$col)
+.vd <- .pca.df(V)
+.vd[, batch := as.factor(.kmeans$cluster)]
+
+plots <- lapply(1:9, .plot.vd.fun, VD = .vd)
+plt <- wrap_plots(plots, ncol = 3)
+print(plt)
+```
+
+```{r Fig_gene_kmeans_QC, fig.width=9, fig.height=3}
+plt <- diagnostic.density.kmeans(.gene.data, .kmeans)
+print(plt)
+```
+
+```{r remove_outlier_cells, echo = F}
+.gene.qc.hdr <- "result/step2/qc_gene"
+.gene.qc.data <- fileset.list(.gene.qc.hdr)
+
+if.needed(.gene.qc.data, {
+
+    .gene.qc.data <-
+        rcpp_mmutil_copy_selected_columns(.gene.data$mtx,
+                                          .gene.data$row,
+                                          .gene.data$col,
+                                          .qc.cells,
+                                          .gene.qc.hdr)
+
+})
+```
+
+```{r compute_gene_svd_after_qc}
+.file <- "result/step2/qc_gene_svd.rds"
+
+if.needed(.file, {
+    gene.svd <- rcpp_mmutil_svd(.gene.qc.data$mtx, RANK=30, TAKE_LN=T,
+                                NUM_THREADS = 16, EM_ITER = 20)
+    saveRDS(gene.svd, .file)
+})
+gene.svd <- readRDS(.file)
+
+V <- gene.svd$V; rownames(V) <- readLines(.gene.qc.data$col)
+plots <- lapply(1:9, .plot.vd.fun, VD = .pca.df(V))
+plt <- wrap_plots(plots, ncol = 3)
+print(plt)
+```
+
+##### Adjust batch effects on the gene expression side
+
+```{r gene_bbknn}
 .file <- "result/step2/gene_bbknn.rds"
 
 if.needed(.file, {
 
-    .batches <- fread(.gene.data$col, col.names="cell", header=F) %>%
-        (function(x) {
-            x[, c("barcode", "batch") := tstrsplit(cell, split="[_]")];
-            x[, barcode := gsub(`barcode`, pattern="-[0-9]$", replacement="")];
-            x[, batch := as.integer(`batch`)]
-            x;
-        }) %>%
-        left_join(.hash.info)
+    V <- gene.svd$V
+    set.seed(1)
+    .batches <- take.batch.info(.gene.qc.data)
 
-    bb <- .batches %>%
-        mutate(b = batch %&% "_" %&% disease) %>%
-        select(b) %>%
-        unlist()
+    .bbknn.gene <-
+        rcpp_mmutil_bbknn(V,
+                          r_batches = .batches, # batch label
+                          knn = 50,             # 20 nn per batch
+                          RECIPROCAL_MATCH = T, # crucial
+                          NUM_THREADS = 16)
 
-    .bbknn <- rcpp_mmutil_bbknn_svd(.gene.data$mtx, bb,
-                                    knn = 30, RANK = 50,
-                                    EM_ITER = 20,
-                                    TAKE_LN = TRUE,
-                                    NUM_THREADS = 16)
+    saveRDS(.bbknn.gene, .file)
+})
+
+.bbknn.gene <- readRDS(.file)
+```
+
+```{r Fig_gene_PC_adj, fig.width=9, fig.height=9}
+V <- .bbknn.gene$factors.adjusted
+rownames(V) <- readLines(.gene.qc.data$col)
+plots <- lapply(1:9, .plot.vd.fun, VD = .pca.df(V))
+plt <- wrap_plots(plots, ncol = 3)
+print(plt)
+```
+
+* We still see bimodal distributions...
+
+```{r one_more_cell_filtering}
+set.seed(1)
+.kmeans <- kmeans(V[, 1:5], 2, nstart = 100)
+k.select <- which.max(table(.kmeans$cluster))
+.final.cells <- readLines(.gene.qc.data$col)[.kmeans$cluster == k.select]
+```
+
+```{r Fig_gene_kmeans_qc_again, fig.width=9, fig.height=3}
+plt <- diagnostic.density.kmeans(.gene.qc.data, .kmeans)
+print(plt)
+```
+
+```{r remove_outlier_cells_again, echo = F}
+.gene.final.hdr <- "result/step2/final_gene"
+.gene.final.data <- fileset.list(.gene.final.hdr)
+
+if.needed(.gene.final.data, {
+    .gene.final.data <-
+        rcpp_mmutil_copy_selected_columns(.gene.qc.data$mtx,
+                                          .gene.qc.data$row,
+                                          .gene.qc.data$col,
+                                          .final.cells,
+                                          .gene.final.hdr)
+})
+```
+
+```{r}
+.file <- "result/step2/final_gene_svd.rds"
+
+if.needed(.file, {
+    gene.svd <- rcpp_mmutil_svd(.gene.final.data$mtx, RANK=30, TAKE_LN=T,
+                                NUM_THREADS = 16, EM_ITER = 20)
+    saveRDS(gene.svd, .file)
+})
+gene.svd <- readRDS(.file)
+
+V <- gene.svd$V; rownames(V) <- readLines(.gene.final.data$col)
+plots <- lapply(1:9, .plot.vd.fun, VD = .pca.df(V))
+plt <- wrap_plots(plots, ncol = 3)
+print(plt)
+```
+
+
+```{r Fig_gene_kmeans_final, fig.width=9, fig.height=3}
+.kmeans <- kmeans(V[, 1:5], 2, nstart = 100)
+plt <- diagnostic.density.kmeans(.gene.final.data, .kmeans)
+print(plt)
+```
+
+
+##### Adjust batch effects on the gene expression side (again)
+
+```{r gene_bbknn_again}
+.file <- "result/step2/final_gene_bbknn.rds"
+
+if.needed(.file, {
+
+    V <- gene.svd$V
+    set.seed(1)
+    .batches <- take.batch.info(.gene.final.data)
+
+    .bbknn.gene <-
+        rcpp_mmutil_bbknn(V,
+                          r_batches = .batches, # batch label
+                          knn = 50,             # 20 nn per batch
+                          RECIPROCAL_MATCH = T, # crucial
+                          NUM_THREADS = 16)
+
+    saveRDS(.bbknn.gene, .file)
+})
+
+.bbknn.gene <- readRDS(.file)
+```
+
+```{r Fig_gene_final_PC_adj, fig.width=9, fig.height=9}
+V <- .bbknn.gene$factors.adjusted
+rownames(V) <- readLines(.gene.final.data$col)
+plots <- lapply(1:9, .plot.vd.fun, VD = .pca.df(V))
+plt <- wrap_plots(plots, ncol = 3)
+print(plt)
+```
+
+
+##### Why do we perform batch correction and cell filtering independently within each data type?
+
+- Systematic batch effects or other biases are differently expressed in different data types.
+
+- For protein surface markers, a large part of systemic biases stemmed from differential antibody affinity. Hence, we found several CD marker activities exceptionally deviate from one batch to the others.
+
+- However, potential biases in gene expression data were largely derived from technology. We noticed that bimodal distributions in the PC coordinates were clearly characterized by a skewed distribution of a number of non-zero elements and average expression per cell.
+
+- Since such technical biases implicate low-quality cells, instead of reconciling them with the rest of data, we removed these cells to prevent them from affecting the follow-up cell type analysis.
+
+
+### B. Combine two data types
+
+```{r create_qced_final_data}
+.final.hdr <- "result/step2/matrix_final"
+.final.data <- fileset.list(.final.hdr)
+
+if.needed(.final.data, {
+    .final.data <-
+        rcpp_mmutil_copy_selected_columns(.data$mtx,
+                                          .data$row,
+                                          .data$col,
+                                          .final.cells,
+                                          .final.hdr)
+})
+```
+
+```{r run_bbknn_on_the_final_data}
+.file <- "result/step2/final_bbknn.rds"
+
+if.needed(.file, {
+
+    .batches <- take.batch.info(.final.data)
+
+    .bbknn <-
+        rcpp_mmutil_bbknn_mtx(.final.data$mtx,
+                              r_batches = .batches, # batch label
+                              RANK = 30,            # PCs
+                              knn = 50,             # 20 nn per batch
+                              RECIPROCAL_MATCH = T, # crucial
+                              EM_ITER = 20,         # EM steps
+                              NUM_THREADS = 16,
+                              TAKE_LN = T,
+                              USE_SINGULAR_VALUES = F)
+
     saveRDS(.bbknn, .file)
 })
+
 .bbknn <- readRDS(.file)
 ```
 
-1. Build a batch-balancing kNN graph
+## 2. Cell type annotation
 
-2. Leiden graph-based clustering
+### Can we distinguish cell types by surface proteins?
 
-3. Construct UMAP the kNN backbone graph
+```{r select_marker_only, echo = FALSE}
+.pos.markers <- .read.marker.file("marker/surface_round1_positive.txt")
+.neg.markers <- .read.marker.file("marker/surface_round1_negative.txt")
+.hdr <- "result/step2/matrix_final"
+.data <- fileset.list(.hdr)
 
-```{r bbknn_umap_leiden_by_genes}
-.file <- "result/step2/gene_bbknn_leiden.txt.gz"
-.cells <- readLines(.gene.data$col)
+.mkdir("result/step2")
+.marker.hdr <- "result/step2/marker"
+.marker.data <- fileset.list(.marker.hdr)
 
-if.needed(.file, {
-    .bbknn.umap <- run.bbknn.umap(.bbknn$knn,
-                                  .cells,
-                                  symmetrize=F,
-                                  min_dist=.1,
-                                  spread=5,
-                                  res=2)
-    fwrite(.bbknn.umap, .file)
+if.needed(.marker.data, {
+    .markers <- unique(c(unlist(.pos.markers),
+                         unlist(.neg.markers)))
+    .marker.data <-
+        rcpp_mmutil_copy_selected_rows(.data$mtx,
+                                       .data$row,
+                                       .data$col,
+                                       .markers,
+                                       .marker.hdr)
 })
-
-.bbknn.umap <- fread(.file)
-
-.bbknn.umap <- .bbknn.umap %>%
-    left_join(annot.dt, by = "tag") %>%
-    filter(celltype != "CD8") %>%
-    mutate(membership = as.factor(membership)) %>%
-    as.data.table()
-
-## remove cells too far from the centre
-## in order to show more cells
-.bbknn.umap[, x := scale(umap1)]
-.bbknn.umap[, y := scale(umap2)]
-.bbknn.umap[, d := sqrt(x^2 + y^2)]
-
-.size <- .bbknn.umap[, .(.N), by = .(membership)]
-
-.bbknn.umap <-
-    .size[N > 0, .(membership)] %>%
-    left_join(.bbknn.umap, by = "membership") %>%
-    filter(`d` < 2.2) %>%
-    as.data.table()
 ```
 
-### Clustering patterns in scRNA-seq generally agrees with the classification results based on surface proteins
+* nTconv : CD3+, CD4+, CD8-, CD25-/CD127+, CD45RA+/CD45RO-
+* mTconv : CD3+, CD4+, CD8-, CD25-/CD127+, CD45RA-/CD45RO+
+* nTreg : CD3+, CD4+, CD8-, CD25+/CD127-, CD45RA+/CD45RO-
+* mTreg : CD3+, CD4+, CD8-, CD25+/CD127-, CD45RA-/CD45RO+
 
-```{r Fig_bbknn_gene_only_umap, fig.width=8, fig.height=3}
-p1 <-
-    .gg.plot(.bbknn.umap, aes(umap1, umap2, color=membership)) +
-    ggrastr::rasterise(geom_point(stroke=0, alpha=.8, size=.7), dpi=300)
+Run annotation purely based on marker proteins:
 
-p2 <-
-    .gg.plot(.bbknn.umap, aes(umap1, umap2, color=celltype)) +
-    ggrastr::rasterise(geom_point(stroke=0, alpha=.8, size=.7), dpi=300) +
-    scale_color_brewer(palette = "Paired")
+```{r run_annotation_on_the_raw}
+.file <- "result/step2/prot_annot_raw.txt.gz"
 
-plt <- p1 | p2
+if.needed(.file, {
+    .pos.markers <- .read.marker.file("marker/surface_round1_positive.txt")
+    .neg.markers <- .read.marker.file("marker/surface_round1_negative.txt")
+    .annot.out <-
+        rcpp_mmutil_annotate_columns(
+            pos_labels = list(p1=.pos.markers),
+            r_neg_labels = list(n1=.neg.markers),
+            mtx_file = .marker.data$mtx,
+            row_file = .marker.data$row,
+            col_file = .marker.data$col,
+            EM_TOL = 1e-6,
+            EM_ITER = 500,
+            TAKE_LN = T)
+
+    .col <- c("tag", "celltype", "prob", "ln.prob")
+    names(.annot.out$annotation) <- .col
+    annot.dt <- setDT(.annot.out$annotation) %>%
+        parse.tag()
+    fwrite(annot.dt, .file)
+})
+
+annot.dt <- fread(.file)
+```
+
+Two-dimensional density plot on the raw CD marker concentrations.
+
+```{r Fig_cdmarker_raw, fig.width=6, fig.height=5}
+marker.raw.mtx <- read.dense(.marker.data$mtx)
+.names <- sapply(readLines(.marker.data$row),
+                 function(s) unlist(strsplit(s, split="[_]+"))[1],
+                 USE.NAMES = F)
+
+rownames(marker.raw.mtx) <- .names
+colnames(marker.raw.mtx) <- readLines(.marker.data$col)
+
+.melt <-
+    reshape2::melt(marker.raw.mtx) %>%
+    filter(!str_detect(`Var1`, "Hashtag")) %>%
+    as.data.table()
+
+.sum <- .melt[,
+              .(value = sum(value)),
+              by = .(Var1, Var2)]
+
+## collapse the same feature names
+.dt <-
+    dcast(.sum, Var1 ~ Var2, value.var = "value", fill = 0)
+
+marker.raw.mtx <- as.matrix(.dt[, -1])
+rownames(marker.raw.mtx) <- unlist(.dt[, 1])
+
+.ct <- c("mTreg","nTreg","mTconv","nTconv")
+plt <- plt.scatter.ct.2(.ct, annot.dt, marker.raw.mtx)
 print(plt)
 ```
 
 ```{r results="asis", echo=F}
-.file <- fig.dir %&% "/Fig_bbknn_gene_only_umap.pdf"
-.gg.save(filename = .file, plot = plt, width=8, height=3)
+.file <- fig.dir %&% "/Fig_cdmarker_raw.pdf"
+.gg.save(filename = .file, plot = plt, width=6, height=5)
 ```
 
-However, gene expression patterns may not be sufficient.
+### Run annotation on the batch adjusted data
 
-```{r Fig_bbknn_gene_only_cluster, fig.width=5, fig.height=2}
-.ct.mem <- .bbknn.umap[, .(nc = .N), by = .(celltype, membership)]
-.ct.mem[, ntot := sum(`nc`), by = .(membership)]
-.ct.mem[, pr := `nc`/`ntot`]
-
-.df <-
-    .ct.mem %>%
-    mutate(row = celltype, col = membership,
-           weight = logit(pmax(pmin(pr, 1-1e-2), 1e-2))) %>%
-    order.pair(ret.tab = TRUE)
-
-plt <-
-    .gg.plot(.df, aes(col, row, fill=weight, size = `nc`)) +
-    xlab("Leiden clustering") +
-    ylab("cell type") +
-    theme(legend.position = "bottom") +
-    geom_point(pch=22) +
-    scale_size_continuous("#cells", range=c(0,5)) +
-    scale_fill_distiller("proportion",
-                         palette="PuRd", direction = 1,
-                         labels=function(x) round(sigmoid(x), 2))
-print(plt)
-```
-
-```{r results="asis", echo=F}
-.file <- fig.dir %&% "/Fig_bbknn_gene_only_cluster.pdf"
-.gg.save(filename = .file, plot = plt, width=5, height=2)
-```
-
-## Joint clustering analysis
-
-```{r run_bbknn_full}
-.file <- "result/step2/full_bbknn.rds"
-
-if.needed(.file, {
-
-    .batches <- fread(.data$col, col.names="cell", header=F) %>%
-        (function(x) {
-            x[, c("barcode", "batch") := tstrsplit(cell, split="[_]")];
-            x[, barcode := gsub(`barcode`, pattern="-[0-9]$", replacement="")];
-            x[, batch := as.integer(`batch`)]
-            x;
-        }) %>%
-        left_join(.hash.info)
-
-    bb <- .batches %>%
-        mutate(b = batch %&% "_" %&% disease) %>%
-        select(b) %>%
-        unlist()
-
-    .bbknn <- rcpp_mmutil_bbknn_svd(.data$mtx, bb,
-                                    knn = 30, RANK = 50,
-                                    EM_ITER = 20,
-                                    TAKE_LN = TRUE,
-                                    NUM_THREADS = 16)
-    saveRDS(.bbknn, .file)
-})
-.bbknn <- readRDS(.file)
-```
-
-### 1. Run annotation based on the surface marker proteins
-
-```{r run_annotation_bbknn_adjusted_full}
-.file <- "result/step2/prot_annot_full.txt.gz"
-
+```{r run_annotation_on_the_adj}
+.file <- "result/step2/prot_annot_adj.txt.gz"
 if.needed(.file, {
     .pos.markers <- .read.marker.file("marker/surface_round1_positive.txt")
     .neg.markers <- .read.marker.file("marker/surface_round1_negative.txt")
@@ -434,283 +582,170 @@ if.needed(.file, {
         rcpp_mmutil_annotate_columns(
             pos_labels = list(p1=.pos.markers),
             r_neg_labels = list(n1=.neg.markers),
-            row_file = .data$row,
-            col_file = .data$col,
             r_U = .bbknn$U,
             r_D = .bbknn$D,
-            r_V = .bbknn$V,
+            r_V = .bbknn$factors.adjusted,
+            row_file = .final.data$row,
+            col_file = .final.data$col,
             EM_TOL = 1e-6,
-            EM_ITER = 500)
+            EM_ITER = 500,
+            TAKE_LN = F)
 
-    annot.dt <- setDT(.annot.out$annotation)
     .col <- c("tag", "celltype", "prob", "ln.prob")
-    names(annot.dt) <- .col
-    annot.dt[, c("barcode","batch") := tstrsplit(tag, split="_")]
+    names(.annot.out$annotation) <- .col
+    annot.dt <- setDT(.annot.out$annotation) %>%
+        parse.tag()
     fwrite(annot.dt, .file)
 })
 annot.dt <- fread(.file)
 ```
 
-Two-dimensional density plot on the raw CD marker concentrations.
-
-```{r Fig_round1_cdmarker_full, fig.width=6, fig.height=5}
-prot.raw.mtx <- read.dense(.prot.data$mtx)
-colnames(prot.raw.mtx) <- readLines(.prot.data$col)
-
-.names <- sapply(readLines(.prot.data$row),
-                 function(s) unlist(strsplit(s, split="[_]+"))[1],
-                 USE.NAMES = F) %>%
-    sapply(gsub, pattern="anti-human", replacement="", USE.NAMES = F) %>%
-    sapply(gsub, pattern="^[-]+", replacement="", USE.NAMES = F)
-
-rownames(prot.raw.mtx) <- .names
-
+```{r Fig_cdmarker_adj, fig.width=6, fig.height=5}
 .ct <- c("mTreg","nTreg","mTconv","nTconv")
-plt <- plt.scatter.ct.2(.ct, annot.dt, prot.raw.mtx)
+plt <- plt.scatter.ct.2(.ct, annot.dt, marker.raw.mtx)
 print(plt)
 ```
 
 ```{r results="asis", echo=F}
-.file <- fig.dir %&% "/Fig_round1_cdmarker_full.pdf"
+.file <- fig.dir %&% "/Fig_cdmarker_adj.pdf"
 .gg.save(filename = .file, plot = plt, width=6, height=5)
 ```
 
-### 2. Followed by cell-cell graph clustering...
+### Final Q/C by Leiden clustering of the adjusted cell-cell interaction data
 
-```{r run_leiden_full}
-.file <- "result/step2/full_bbknn_leiden.txt.gz"
-.cells <- readLines(.data$col)
+Cell-type annotation results purely based on known protein surface markers may be susceptible to low signal-to-noise ratio and antibody detection sensitivity issues. Unsupervised clustering methods often help compensate for ambiguous prediction results of marker-based methods as clustering methods take into account inter-cellular interaction patterns commonly observed across all the transcriptomic and antibody data.
 
+```{r final_celltype_calling}
+.file <- "Tab/step2_celltype.txt.gz"
 if.needed(.file, {
-    .bbknn.umap <- run.bbknn.umap(.bbknn$knn,
-                                  .cells,
-                                  symmetrize=F,
-                                  res=3,
-                                  nrepeat=20,
-                                  min_dist=.01,
-                                  spread=5)
-    fwrite(.bbknn.umap, .file)
+    .tags <- readLines(.final.data$col)
+    .leiden <- run.leiden(.bbknn$knn.adj, .tags, res = 1, nrepeat = 100, min.size = 10)
+
+    .tab <-
+        annot.dt %>%
+        left_join(.leiden) %>%
+        na.omit()
+
+    ## identify problematic clusters
+    .fraction <- .tab[, .(.N), by = .(celltype, membership, component)]
+    .fraction[, Ntot := sum(`N`), by = .(membership, component)]
+    .mem.qc <- .fraction[order(`N`, decreasing = T), head(.SD, 1), by = .(membership, component)]
+    .remove <- .mem.qc[`N` / `Ntot` < .5, .(membership, component)]
+    .ct.map <- .mem.qc[, .(membership, component, celltype)]
+
+    final.cell.type <- .leiden %>%
+        anti_join(.remove) %>%
+        left_join(.ct.map) %>%
+        as.data.table() %>%
+        parse.tag()
+    fwrite(final.cell.type, .file)
 })
 
-.bbknn.umap <- fread(.file)
-
-.bbknn.umap <- .bbknn.umap %>%
-    left_join(annot.dt, by = "tag") %>%
-    mutate(membership = as.factor(membership)) %>%
-    as.data.table()
-
-## remove cells too far from the centre
-## in order to show more cells
-.bbknn.umap[, x := scale(umap1)]
-.bbknn.umap[, y := scale(umap2)]
-.bbknn.umap[, d := sqrt(x^2 + y^2)]
-
-.size <- .bbknn.umap[, .(.N), by = .(membership)]
-
-.bbknn.umap <-
-    .size[N > 1300, .(membership)] %>%
-    left_join(.bbknn.umap, by = "membership") %>%
-    filter(`d` < 2.2) %>%
-    as.data.table()
+final.cell.type <- fread(.file)
 ```
 
-```{r Fig_bbknn_full_umap, fig.width=8, fig.height=3}
+### Will the same classification results hold in overall data?
+
+```{r calculate_tumap_coordinates}
+.file <- "Tab/step2_umap.txt.gz"
+if.needed(.file, {
+
+    set.seed(1)
+    .umap <- uwot::tumap(.bbknn$factors.adjusted,
+                         learning_rate=.01,
+                         n_epochs=1000,
+                         n_sgd_threads=16,
+                         verbose=T,
+                         init="lvrandom",
+                         scale=T)
+
+    .tags <- readLines(.final.data$col)
+
+    colnames(.umap) <- "UMAP" %&% 1:ncol(.umap)
+
+    .umap.dt <- final.cell.type %>%
+        left_join(data.table(.umap, tag = .tags)) %>%
+        na.omit()
+
+    fwrite(.umap.dt, .file)
+})
+.umap.dt <- fread(.file)
+```
+
+```{r calculate_tSNE_coordinates}
+.file <- "Tab/step2_tsne.txt.gz"
+if.needed(.file, {
+    .tsne <- Rtsne::Rtsne(.bbknn$factors.adjusted,
+                          check_duplicates = FALSE,
+                          verbose = T,
+                          num_threads = 16)
+
+    .tags <- readLines(.final.data$col)
+
+    colnames(.tsne$Y) <- "tSNE" %&% 1:ncol(.tsne$Y)
+
+    .tsne.dt <- final.cell.type %>%
+        left_join(data.table(.tsne$Y, tag = .tags)) %>%
+        na.omit()
+    fwrite(.tsne.dt, .file)
+})
+.tsne.dt <- fread(.file)
+```
+
+### UMAP
+
+```{r Fig_umap_celltype, fig.width=6.4, fig.height=3}
+p1 <- .gg.plot(.umap.dt, aes(UMAP1, UMAP2, color=celltype)) +
+    ggrastr::rasterise(geom_point(stroke = 0, size=1), dpi=300) +
+    theme(legend.position = c(0,0), legend.justification = c(0,0)) +
+    ggtitle("cell types") +
+    scale_color_brewer("", palette = "Paired")
+
+p2 <- .gg.plot(.umap.dt, aes(UMAP1, UMAP2, color=as.factor(batch))) +
+    ggrastr::rasterise(geom_point(stroke = 0, size=1), dpi=300) +
+    theme(legend.position = c(0,0), legend.justification = c(0,0)) +
+    ggtitle("batch membership") +
+    scale_color_brewer("", palette = "Set3")
+
+plt <- p1 | p2
+print(plt)
+```
+
+
+```{r results="asis", echo=F}
+.file <- fig.dir %&% "/Fig_umap_celltype.pdf"
+.gg.save(filename = .file, plot = plt, width=6.4, height=3)
+```
+
+
+### tSNE
+
+
+```{r Fig_tsne_celltype, fig.width=6.4, fig.height=3}
 p1 <-
-    .gg.plot(.bbknn.umap[sample(.N)], aes(umap1, umap2, color=membership)) +
-    ggrastr::rasterise(geom_point(stroke=0, alpha=.8, size=.7), dpi=300)
+    .gg.plot(.tsne.dt, aes(tSNE1, tSNE2, color=celltype)) +
+    ggrastr::rasterise(geom_point(stroke = 0, size=1), dpi=300) +
+    theme(legend.position = c(0,0), legend.justification = c(0,0)) +
+    ggtitle("cell types") +
+    scale_color_brewer("", palette = "Paired")
 
 p2 <-
-    .gg.plot(.bbknn.umap[sample(.N)], aes(umap1, umap2, color=celltype)) +
-    ggrastr::rasterise(geom_point(stroke=0, alpha=.8, size=.7), dpi=300) +
-    scale_color_brewer(palette = "Paired")
+    .gg.plot(.tsne.dt, aes(tSNE1, tSNE2, color=as.factor(batch))) +
+    ggrastr::rasterise(geom_point(stroke = 0, size=1), dpi=300) +
+    theme(legend.position = c(0,0), legend.justification = c(0,0)) +
+    ggtitle("batch membership") +
+    scale_color_brewer("", palette = "Set3")
 
 plt <- p1 | p2
 print(plt)
 ```
 
 ```{r results="asis", echo=F}
-.file <- fig.dir %&% "/Fig_bbknn_full_umap.pdf"
-.gg.save(filename = .file, plot = plt, width=8, height=3)
+.file <- fig.dir %&% "/Fig_tsne_celltype.pdf"
+.gg.save(filename = .file, plot = plt, width=6.4, height=3)
 ```
 
-
-```{r Fig_bbknn_full_cluster, fig.width=5, fig.height=2}
-.ct.mem <- .bbknn.umap[, .(nc = .N), by = .(celltype, membership)]
-.ct.mem[, ntot := sum(`nc`), by = .(membership)]
-.ct.mem[, pr := `nc`/`ntot`]
-
-.df <-
-    .ct.mem %>%
-    mutate(row = celltype, col = membership,
-           weight = logit(pmax(pmin(pr, 1-1e-2), 1e-2))) %>%
-    order.pair(ret.tab = TRUE)
-
-plt <-
-    .gg.plot(.df, aes(col, row, fill=weight, size = `nc`)) +
-    xlab("Leiden clustering") +
-    ylab("cell type") +
-    theme(legend.position = "bottom") +
-    geom_point(pch=22) +
-    scale_size_continuous("#cells", range=c(0,5)) +
-    scale_fill_distiller("proportion",
-                         palette="PuRd", direction = 1,
-                         labels=function(x) round(sigmoid(x), 2))
-print(plt)
-```
-
-```{r results="asis", echo=F}
-.file <- fig.dir %&% "/Fig_bbknn_full_cluster.pdf"
-.gg.save(filename = .file, plot = plt, width=5, height=2)
-```
-
-
-```{r results="asis", echo=FALSE}
-.file <- "result/step2/full_bbknn_leiden.txt.gz"
-.dt <- fread(.file) %>%
-    left_join(annot.dt, by = "tag") %>%
-    as.data.table()
-```
-
-* Annotate each cell cluster with the maximally matching cell type
-
-```{r}
-## a. Assign cell types to clusters
-.tot.size <- .dt[, .(.N), by = .(membership)]
-.tot.size[, membership := as.integer(`membership`)]
-.size <- .dt[, .(.N), by = .(membership, celltype)]
-.size[, membership := as.integer(`membership`)]
-
-.argmax <- .size[order(`N`), tail(.SD, 1), by = .(membership)]
-.argmax[, membership := as.integer(`membership`)]
-```
-
-* `r length(unique(.argmax$membership))` modules
-
-```{r}
-.argmax[, `N.overlap` := `N`]
-.argmax[, `N` := NULL]
-
-.size.argmax <- left_join(.argmax, .tot.size) %>% as.data.table()
-
-.file <- "result/step2/full_bbknn_leiden.txt.gz"
-celltype.final <-
-    fread(.file) %>%
-    left_join(.size.argmax) %>%
-    as.data.table() %>%
-    na.omit()
-```
-
-```{r}
-## b. Remove small clusters
-celltype.final <- celltype.final[`N` > 100]
-
-## c. Remove ambiguous ones
-celltype.final <- celltype.final[`N.overlap`/`N` > .5]
-```
-
-;* Remove clusters with mixed cell types and retain `r nrow(.size.argmax[N > 100 & N.overlap/N > .5])` clusters
-
-* `r num.int(nrow(celltype.final))` cells.
-
-```{r echo = F}
-celltype.final[, c("barcode","batch") := tstrsplit(`tag`, split="_")]
-celltype.final[, batch := as.integer(`batch`)]
-celltype.final[, barcode := gsub(`barcode`, pattern="-[0-9]+$", replacement="")]
-```
-
-Check with Liang's supervised approach.
-
-```{r Fig_overlap_Liang, fig.width=3.2, fig.height=2.8}
-.overlap <-
-    fread("data/PRDM1/PRDM1_SL.csv.gz") %>%
-    left_join(celltype.final) %>%
-    na.omit()
-
-.dt <- .overlap[, .(.N), by = .(cell_type_liang, celltype)]
-.dt <- .dt[, lab := num.int(`N`)]
-
-.aes <- aes(celltype, cell_type_liang, fill=`N`, label=`lab`)
-plt <- .gg.plot(.dt, .aes) +
-    geom_tile(linewidth=.1, colour="black") +
-    geom_text(size=3) +
-    scale_fill_distiller("N", direction=1) +
-    theme(axis.text.x = element_text(angle=90, vjust=1, hjust=1)) +
-    xlab("CD annotation + Leiden") +
-    ylab("Classifier (Liang)")
-print(plt)
-```
-
-```{r Fig_bbknn_refined_umap, fig.width=12, fig.height=3, results="asis"}
-## remove cells too far from the centre
-## in order to show more cells
-.temp <- fread("data/PRDM1/PRDM1_SL.csv.gz")
-.bbknn.umap <- celltype.final %>% left_join(.temp) %>% as.data.table()
-
-.bbknn.umap[, membership := as.factor(`membership`)]
-.bbknn.umap[, x := scale(umap1)]
-.bbknn.umap[, y := scale(umap2)]
-.bbknn.umap[, d := sqrt(x^2 + y^2)]
-.bbknn.umap <- .bbknn.umap[`d` < 2.2 & `N` > 1300]
-
-p1 <-
-    .gg.plot(.bbknn.umap[sample(.N)], aes(umap1, umap2, color=membership)) +
-    ggrastr::rasterise(geom_point(stroke=0, alpha=.8, size=.7), dpi=300) +
-    theme(legend.position = "none")
-
-p2 <-
-    .gg.plot(.bbknn.umap[sample(.N)], aes(umap1, umap2, color=celltype)) +
-    ggrastr::rasterise(geom_point(stroke=0, alpha=.8, size=.7), dpi=300) +
-    scale_color_brewer("annotation\n+Leiden", palette = "Paired")
-
-p3 <-
-    .gg.plot(na.omit(.bbknn.umap[sample(.N)]), aes(umap1, umap2, color=cell_type_liang)) +
-    ggrastr::rasterise(geom_point(stroke=0, alpha=.8, size=.7), dpi=300) +
-    scale_color_brewer("supervised", palette = "Paired")
-
-plt <- wrap_plots(p1, p2, p3, nrow=1)
-print(plt)
-
-.file <- fig.dir %&% "/Fig_bbknn_refined_umap.pdf"
-.gg.save(filename = .file, plot = plt, width=12, height=3)
-```
-
-
-```{r echo = F, results = "asis"}
-.file <- "Tab/step2_celltype.txt.gz"
-.mkdir("Tab/")
-if.needed(.file,
-{
-    fwrite(celltype.final, .file, sep = "\t", col.names = T)
-})
-cat("[**DOWNLOAD:** Cell type estimation]("%&% .file %&% ")\n\n")
-```
-
-```{r Fig_bbknn_refined_cluster, fig.width=5, fig.height=2, results="asis"}
-.ct.mem <- celltype.final[, .(nc = .N), by = .(celltype, membership)]
-.ct.mem[, ntot := sum(`nc`), by = .(membership)]
-.ct.mem[, pr := `nc`/`ntot`]
-
-.df <-
-    .ct.mem %>%
-    mutate(row = celltype, col = membership,
-           weight = logit(pmax(pmin(pr, 1-1e-2), 1e-2))) %>%
-    order.pair(ret.tab = TRUE)
-
-plt <-
-    .gg.plot(.df, aes(col, row, size = `nc`)) +
-    xlab("Leiden clustering") +
-    ylab("cell type") +
-    theme(legend.position = "bottom") +
-    geom_point(pch=22, fill="black") +
-    scale_size_continuous("#cells", range=c(0,5))
-print(plt)
-
-.file <- fig.dir %&% "/Fig_bbknn_refined_cluster.pdf"
-.gg.save(filename = .file, plot = plt, width=5, height=2)
-```
-
-
-### 3. Confirm by other marker genes/proteins
+## 3. Confirm by other marker genes/proteins (normalized expression)
 
 ```{r}
 .markers <-
@@ -721,96 +756,78 @@ print(plt)
       "HLA") %>%
     unique
 
-.rows <- .fread(.data$row, col.names="r")
-.rows[, c("ensembl_gene_id","hgnc_symbol") := tstrsplit(`r`,split="_")]
-
-.markers <- .rows[`hgnc_symbol` %in% .markers]$r
-
-.marker.hdr <- "result/step2/marker/marker"
-.mkdir(dirname(.marker.hdr))
-.marker.data <- fileset.list(.marker.hdr)
-if.needed(.marker.data, {
-    .marker.data <-
-        rcpp_mmutil_copy_selected_rows(.data$mtx,
-                                       .data$row,
-                                       .data$col,
-                                       .markers,
-                                       .marker.hdr)
-})
-```
-
-```{r include = FALSE}
-.tags <- readLines("result/step2/marker/marker.cols.gz")
-
 .ct <- c("mTreg","nTreg","mTconv","nTconv")
-.markers <- readLines(.marker.data$row)
-
-.temp <- copy(celltype.final)
-.temp[, membership := as.factor(`membership`)]
-.temp[, x := scale(umap1)]
-.temp[, y := scale(umap2)]
-.temp[, d := sqrt(x^2 + y^2)]
-.temp <- .temp[`d` < 2.2 & `N` > 1300,
-               .(tag, umap1, umap2, celltype)]
 
 marker.dt <-
-    t(read.dense(.marker.data$mtx)) %>%
-    (function(x) { colnames(x) <- .markers; x }) %>%
-    as.data.table() %>%
-    mutate(tag = .tags) %>%
-    left_join(.temp, by = "tag") %>%
+    t(bbknn.x(.final.data, .bbknn, .markers, .rescale=F)) %>%
+    as.data.frame() %>%
+    rownames_to_column("tag") %>%
+    left_join(.umap.dt[, .(tag, UMAP1, UMAP2)]) %>%
+    left_join(.tsne.dt[, .(tag, tSNE1, tSNE2)]) %>%
+    left_join(final.cell.type[, .(tag, celltype)]) %>%
     na.omit() %>%
     as.data.table() %>%
-    melt(id.vars = c("tag", "umap1", "umap2","celltype"),
+    melt(id.vars = c("tag", "UMAP1", "UMAP2", "tSNE1", "tSNE2", "celltype"),
          variable.name = "marker",
          value.name = "expr") %>%
     mutate(celltype = factor(celltype, .ct)) %>%
-    as.data.table
+    as.data.table()
 
-plot.marker.umap <- function(.marker) {
+plot.marker.scatter <- function(.marker, show.tsne = F) {
 
     .dt <- marker.dt[marker == .marker]
     ## handle outliers for better visualization
     .cutoff <- quantile(.dt$expr, probs = .95, na.rm=TRUE)
-    .cutoff <- max(.cutoff, 2.5)
-    .aes <- aes(x = umap1,
-                y = umap2,
-                colour = expr)
+
+    .aes <- aes(x = UMAP1, y = UMAP2, colour = exp(expr))
+    if(show.tsne){
+        .aes <- aes(x = tSNE1, y = tSNE2, colour = exp(expr))
+    }
     .dt <- .dt %>%
-        mutate(expr = pmin(expr, .cutoff)) %>%
+        mutate(expr = scale(pmin(expr, .cutoff))) %>%
         arrange(expr)
     ret <-
         ggplot(.dt, .aes) +
         ggtitle(.marker) +
-        xlab("UMAP 1") + ylab("UMAP 2") +
-        theme_minimal() +
+        theme_classic() +
         ggrastr::rasterise(geom_point(stroke=.0, size=.7, alpha=.8), dpi=300) +
         theme(legend.key.width = unit(.2, "lines"),
               legend.key.height = unit(.5, "lines"),
+              legend.position = c(1,1),
+              legend.justification = c(1,1),
               legend.title = element_text(size=6),
-              legend.text = element_text(size=5))
-    if(str_starts(.marker, "anti_")) {
-        ret <- ret + scale_colour_distiller("", direction=1)
-    } else {
-        ret <- ret + scale_colour_distiller("", palette="RdPu", direction=1)
-    }
+              legend.text = element_text(size=5)) +
+        scale_colour_distiller("", palette="RdPu", direction=1)
+
     return(ret)
 }
 ```
 
-**Note: these plots show expression values without batch adjustment**
+### UMAP for the marker genes and proteins
 
-```{r Fig_marker, fig.width=3.2, fig.height=2.8, results="asis"}
+```{r Fig_marker_umap, fig.width=3.2, fig.height=2.8, results="asis"}
 .markers <- sort(as.character(unique(marker.dt$marker)))
 for(g in .markers){
-    plt <- plot.marker.umap(g)
+    plt <- plot.marker.scatter(g, show.tsne = F)
     print(plt)
     .file <- fig.dir %&% "/Fig_marker_" %&% g %&% "_umap.pdf"
     .gg.save(filename = .file, plot = plt, width=3.2, height=2.8)
 }
 ```
 
-## Basic statistics for the first round annotation (`r num.int(nrow(celltype.final))` cells)
+### tSNE for the marker genes and proteins
+
+```{r Fig_marker_tsne, fig.width=3.2, fig.height=2.8, results="asis"}
+.markers <- sort(as.character(unique(marker.dt$marker)))
+for(g in .markers){
+    plt <- plot.marker.scatter(g, show.tsne = T)
+    print(plt)
+    .file <- fig.dir %&% "/Fig_marker_" %&% g %&% "_tsne.pdf"
+    .gg.save(filename = .file, plot = plt, width=3.2, height=2.8)
+}
+```
+
+## 4. Basic statistics for the first round annotation (`r num.int(nrow(final.cell.type))` cells)
 
 ```{r include=FALSE}
 .sum.stat.batch <- function(.dt) {
@@ -844,50 +861,25 @@ for(g in .markers){
 }
 ```
 
-
-```{r}
-.hash.mtx <- read.dense("result/step1/hash.mtx.gz")
-.hash.argmax <- apply(.hash.mtx, 2, which.max)
-
-.cells <- "result/step1/hash.cols.gz" %>%
-    fread(header=F, col.names="cell") %>%
-    (function(x) {
-        x[,c("barcode","batch"):=tstrsplit(`cell`,split="_")];
-        x[, barcode := gsub(`barcode`, pattern="-[0-9]$", replacement="")];
-        x[, hash := .hash.argmax]
-        x[, batch := as.integer(`batch`)]
-        return(x);
-    })
-
-.sample.info <-
-    readxl::read_xlsx("data/Hashing list MS Treg project.xlsx", 1) %>%
-    rename(Sample = `Cell type`) %>%
-    mutate(hash = gsub("#","",`hash`)) %>%
-    mutate(hash = as.integer(`hash`)) %>%
-    mutate(disease = substr(`subject`, 1, 2))
-
-.hash.info <-
-    left_join(.cells, .sample.info)
-
-.dt <-
-    celltype.final %>%
-    mutate(batch=as.integer(batch)) %>%
-    left_join(.hash.info) %>%
-    mutate(ct=factor(celltype, c("nTconv","mTconv","nTreg","mTreg"))) %>%
-    na.omit()
-```
-
-## Combining all the experiments
-
 ```{r Fig_count_stat_tot, fig.height=3, fig.width=6, echo = FALSE, results="asis"}
+.ct <- c("mTreg","nTreg","mTconv","nTconv")
+
+.dt <- final.cell.type %>%
+    left_join(.hash.info) %>%
+    mutate(ct = factor(celltype, .ct))
+
 .stat <-
     .dt[,
         .(N = .N),
         by=.(batch, celltype, ct, disease)] %>%
     .sum.stat.batch
+
 plt <- .plt.sum.stat(.stat) +
     ggtitle("Profiled on all the samples")
 print(plt)
+```
+
+```{r results="asis", echo=F}
 .file <- fig.dir %&% "/Fig_count_stat_tot.pdf"
 .gg.save(filename = .file, plot = plt, height=3, width=6)
 ```
@@ -902,102 +894,43 @@ print(plt)
 plt <- .plt.sum.stat(.stat.tot) +
     ggtitle("Profiled on all the samples")
 print(plt)
+```
+
+```{r results="asis", echo=F}
 .file <- fig.dir %&% "/Fig_count_merged_stat_tot.pdf"
 .gg.save(filename = .file, plot = plt, height=3, width=2.2)
 ```
 
-## Total CD4 samples
 
-```{r Fig_count_stat_cd4, fig.height=3, fig.width=6, echo = FALSE, results="asis"}
-.stat <-
-    .dt[Sample == "Total CD4T cells",
-        .(N = .N),
-        by=.(batch, celltype, ct, disease)] %>%
-    .sum.stat.batch
-plt <- .plt.sum.stat(.stat) +
-    ggtitle("Profiled on Total CD4 T-cells")
-print(plt)
-.file <- fig.dir %&% "/Fig_count_stat_cd4.pdf"
-.gg.save(filename = .file, plot = plt, height=3, width=6)
-```
-
-```{r Fig_count_merged_stat_cd4, fig.height=3, fig.width=2.2}
-.stat <-
-    .dt[Sample == "Total CD4T cells", .(N = .N), by=.(celltype, ct, disease)] %>%
-    .sum.stat.tot %>%
-    mutate(batch = "(N=" %&% num.int(sum(.stat$N)) %&% ")")
-plt <- .plt.sum.stat(.stat) +
-    ggtitle("Profiled on Total CD4 T-cells")
-print(plt)
-```
-
-```{r echo = FALSE, results="asis"}
-.file <- fig.dir %&% "/Fig_count_merged_stat_cd4.pdf"
-.gg.save(filename = .file, plot = plt, height=3, width=2.2)
-```
-
-## CD25 enriched samples
-
-```{r Fig_count_stat_cd25enriched, fig.height=3, fig.width=6}
-.stat <-
-    .dt[Sample == "CD25+ CD4T cells",
-        .(N = .N),
-        by=.(batch, celltype, ct, disease)] %>%
-    .sum.stat.batch
-plt <- .plt.sum.stat(.stat) +
-    ggtitle("Profiled on the CD25+ enriched")
-print(plt)
-```
-
-```{r echo = FALSE, results="asis"}
-.file <- fig.dir %&% "/Fig_count_stat_cd25enriched.pdf"
-.gg.save(filename = .file, plot = plt, height=3, width=6)
-```
-
-```{r Fig_count_merged_stat_cd25enriched, fig.height=3, fig.width=2.2}
-.stat <-
-    .dt[Sample == "CD25+ CD4T cells", .(N = .N), by=.(celltype, ct, disease)] %>%
-    .sum.stat.tot %>%
-    mutate(batch = "(N=" %&% num.int(sum(.stat$N)) %&% ")")
-plt <- .plt.sum.stat(.stat) +
-    ggtitle("Profiled on the CD25+ enriched")
-print(plt)
-```
-
-```{r echo = FALSE, results="asis"}
-.file <- fig.dir %&% "/Fig_count_merged_stat_cd25enriched.pdf"
-.gg.save(filename = .file, plot = plt, height=3, width=2.2)
-```
-
-### PRDM1 short vs. long
+## 5. PRDM1 short vs. long
 
 ```{r include = FALSE}
 prdm.thm <-
-    theme_minimal() +
+    theme_classic() +
     theme(legend.key.width = unit(.2, "lines"),
           legend.key.height = unit(.5, "lines"),
           legend.title = element_text(size=6),
-          legend.text = element_text(size=5))
+          legend.text = element_text(size=5),
+          legend.position = c(0,0),
+          legend.justification = c(0,0))
 ```
 
 ```{r incldue = FALSE}
 prdm.dt <- fread("data/PRDM1/PRDM1_SL.csv.gz")
 
 .dt <-
-    copy(celltype.final) %>%
+    copy(final.cell.type) %>%
     left_join(prdm.dt) %>%
+    left_join(.umap.dt) %>%
+    left_join(.tsne.dt) %>%
     na.omit() %>%
     as.data.table()
 
 .dt[, membership := as.factor(`membership`)]
-.dt[, x := scale(umap1)]
-.dt[, y := scale(umap2)]
-.dt[, d := sqrt(x^2 + y^2)]
-.dt <- .dt[`d` < 2.2 & `N` > 1300]
 ```
 
-```{r Fig_PRDM1_isoform_umap, fig.width=7, fig.height=3}
-.aes <- aes(umap1, umap2, colour=pmin(PRDM1_short, 3))
+```{r Fig_PRDM1_isoform_umap, fig.width=6.4, fig.height=3}
+.aes <- aes(UMAP1, UMAP2, colour=pmin(PRDM1_short, 3))
 
 p1 <-
     ggplot(.dt[order(PRDM1_short)], .aes) +
@@ -1007,7 +940,7 @@ p1 <-
                            palette="RdPu",
                            direction=1)
 
-.aes <- aes(umap1, umap2, colour = pmin(PRDM1_long, 3))
+.aes <- aes(UMAP1, UMAP2, colour = pmin(PRDM1_long, 3))
 
 p2 <-
     ggplot(.dt[order(PRDM1_long)], .aes) +
@@ -1023,63 +956,46 @@ print(plt)
 
 ```{r results="asis", echo=FALSE}
 .file <- fig.dir %&% "/Fig_PRDM1_isoform_umap.pdf"
-.gg.save(filename = .file, plot = plt, width=7, height=3)
+.gg.save(filename = .file, plot = plt, width=6.4, height=3)
 ```
 
-### Stratify cells by batches and disease status
+```{r Fig_PRDM1_isoform_tsne, fig.width=6.4, fig.height=3}
+.aes <- aes(tSNE1, tSNE2, colour=pmin(PRDM1_short, 3))
 
-```{r include=F}
-.dt <- celltype.final %>%
-    mutate(batch=as.integer(batch)) %>%
-    left_join(.hash.info) %>%
-    na.omit()
+p1 <-
+    ggplot(.dt[order(PRDM1_short)], .aes) +
+    xlab("tSNE 1") + ylab("tSNE 2") + prdm.thm +
+    ggrastr::rasterise(geom_point(stroke=0, size=1), dpi = 300) +
+    scale_colour_distiller("PRDM1\nshort",
+                           palette="RdPu",
+                           direction=1)
 
-.dt[, membership := as.factor(`membership`)]
-.dt[, x := scale(umap1)]
-.dt[, y := scale(umap2)]
-.dt[, d := sqrt(x^2 + y^2)]
-.dt <- .dt[`d` < 2.2 & `N` > 1300]
-```
+.aes <- aes(tSNE1, tSNE2, colour = pmin(PRDM1_long, 3))
 
-```{r Fig_bbknn_full_batch, fig.width=8, fig.height=6}
-.aes <- aes(umap1, umap2, colour=as.factor(batch))
+p2 <-
+    ggplot(.dt[order(PRDM1_long)], .aes) +
+    xlab("tSNE 1") + ylab("tSNE 2") + prdm.thm +
+    ggrastr::rasterise(geom_point(stroke=0, size=1), dpi = 300) +
+    scale_colour_distiller("PRDM1\nlong",
+                           palette="RdPu",
+                           direction=1)
 
-B <- length(unique(.dt$batch))
-
-plt <-
-    .gg.plot(.dt[sample(.N)], .aes) +
-    xlab("UMAP 1") + ylab("UMAP 2") +
-    ggtitle("stratified by " %&% B %&% " batches") +
-    facet_wrap( ~ "#" %&% batch, nrow=2) +
-    ggrastr::rasterise(geom_point(stroke=0, size=.7), dpi = 300) +
-    scale_color_manual(values=.more.colors(B,.palette="Set1"),
-                       guide="none")
+plt <- p1 | p2
 print(plt)
 ```
 
 ```{r results="asis", echo=FALSE}
-.file <- fig.dir %&% "/Fig_bbknn_full_batch.pdf"
-.gg.save(filename = .file, plot = plt, width=8, height=6)
+.file <- fig.dir %&% "/Fig_PRDM1_isoform_tsne.pdf"
+.gg.save(filename = .file, plot = plt, width=6.4, height=3)
 ```
 
+## 5. Tables
 
-```{r Fig_bbknn_full_disease, fig.width=5.5, fig.height=3}
-.aes <- aes(umap1, umap2, colour=disease)
+```{r results="asis", echo=F}
+cat("* [**DOWNLOAD:** Cell type annotation](Tab/step2_celltype.txt.gz)\n\n")
 
-B <- length(unique(.dt$disease))
+cat("* [**DOWNLOAD:** UMAP + annotation](Tab/step2_umap.txt.gz)\n\n")
 
-plt <-
-    .gg.plot(.dt[sample(.N)], .aes) +
-    xlab("UMAP 1") + ylab("UMAP 2") +
-    ggtitle("stratified by " %&% B %&% " disease status") +
-    facet_wrap( ~ disease, nrow = 1) +
-    ggrastr::rasterise(geom_point(stroke=0, size=.7), dpi = 300) +
-    scale_color_brewer(guide="none", palette="Set2")
-print(plt)
+cat("* [**DOWNLOAD:** tSNE + annotation](Tab/step2_tsne.txt.gz)\n\n")
 ```
 
-
-```{r results="asis", echo=FALSE}
-.file <- fig.dir %&% "/Fig_bbknn_full_disease.pdf"
-.gg.save(filename = .file, plot = plt, width=5.5, height=3)
-```

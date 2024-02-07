@@ -2,7 +2,7 @@
 title: "Step 4: subtype analysis"
 author: Yongjin Park
 theme: jekyll-theme-minimal
-date: "2024-01-29"
+date: "2024-02-04"
 bibliography: "MS_Ref.bib"
 output:
   html_document:
@@ -80,7 +80,7 @@ take.marker.stats <- function(x, dict){
 
     ret <- data.table()
     for(k in unique(dict$membership)){
-        tag.k <- .bbknn.umap[membership == k]$tag
+        tag.k <- dict[membership == k]$tag
         x.k <- x[, colnames(x) %in% tag.k, drop = F]
         y.k <- x[, !(colnames(x) %in% tag.k), drop = F]
         ## wilcox within vs. outside

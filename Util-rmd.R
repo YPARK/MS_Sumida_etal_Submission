@@ -264,3 +264,63 @@ make.gs.lol <- function(.dt) {
 }
 
 
+################################################################
+
+plt.scatter.ct.2 <- function(.ct.show, .assign.tab, .mtx,
+                             m1x = "CD25",
+                             m1y = "CD127",
+                             m2x = "CD45RO",
+                             m2y = "CD45RA") {
+
+    .idx <- data.table(tag = colnames(.mtx)) %>%
+        mutate(j = 1:n()) %>%
+        left_join(.assign.tab[as.character(celltype) %in% .ct.show]) %>%
+        select(j, celltype, prob)
+
+    .dt <- data.table(m1x = .mtx[m1x, .idx$j],
+                      m1y = .mtx[m1y, .idx$j],
+                      m2x = .mtx[m2x, .idx$j],
+                      m2y = .mtx[m2y, .idx$j],
+                      prob = .idx$prob,
+                      celltype = factor(.idx$celltype, .ct.show))
+    .dt <- .dt[celltype %in% .ct.show]
+    .med.dt <-
+        .dt[m1x > 0 &
+            m2x > 0 &
+            m1y > 0 &
+            m2y > 0,
+            .(m1x = median(m1x),
+                m1y = median(m1y),
+                m2x = median(m2x),
+                m2y = median(m2y)),
+            by = .(celltype)]
+
+    .add.lab <- function(.plt) {
+
+        .lab <- function(x) num.int(10^x)
+        .brk <- seq(0,5)
+
+        .plt +
+            theme_classic() +
+            theme(axis.text = element_text(size=6)) +
+            scale_x_continuous(breaks=.brk, labels=.lab, limits=c(-.1,3.2)) +
+            scale_y_continuous(breaks=.brk, labels=.lab, limits=c(-.1,3.2)) +
+            theme(axis.text.x = element_text(angle=90, vjust=1, hjust=1)) +
+            facet_grid(.~celltype) +
+            stat_density_2d(geom = "raster",
+                            aes(fill = after_stat(density)),
+                            show.legend=F,
+                            contour=F) +
+            scale_fill_viridis_c() +
+            stat_density2d(linewidth=.2, colour="white") +
+            geom_point(data=.med.dt, colour=2, pch=3, size=1, stroke=1) +
+            geom_abline(slope=1, linewidth=.2, colour="white")
+    }
+    .aes <- aes(x=log10(m1x), y=log10(m1y))
+    p1 <- (ggplot(.dt[m1x > 0 & m1y > 0], .aes) %>% .add.lab) +
+        xlab(m1x) + ylab(m1y)
+    .aes <- aes(x=log10(m2x), y=log10(m2y))
+    p2 <- (ggplot(.dt[m2x > 0 & m2y > 0], .aes) %>% .add.lab) +
+        xlab(m2x) + ylab(m2y)
+    p1/p2
+}
