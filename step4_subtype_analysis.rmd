@@ -273,7 +273,7 @@ print(plt)
 
 ```{r results="asis", echo = F}
 .file <- fig.dir %&% "/Fig_bbknn_mtconv.pdf"
-#.gg.save(filename = .file, plot = plt, width=6, height=3)
+.gg.save(filename = .file, plot = plt, width=6, height=3)
 ```
 
 ```{r Fig_bbknn_mtconv_sub, fig.width=6, fig.height=3}
@@ -297,7 +297,7 @@ print(plt)
 
 ```{r results="asis", echo = F}
 .file <- fig.dir %&% "/Fig_bbknn_mtconv_sub.pdf"
-#.gg.save(filename = .file, plot = plt, width=6, height=3)
+.gg.save(filename = .file, plot = plt, width=6, height=3)
 ```
 
 ### D. Summary heatmap
@@ -330,7 +330,7 @@ print(plt)
 
 ```{r results="asis", echo=F}
 .file <- fig.dir %&% "/Fig_mtconv_sum_membership.pdf"
-#.gg.save(filename = .file, plot = plt, width=1.8, height=6.5)
+.gg.save(filename = .file, plot = plt, width=1.8, height=6.5)
 ```
 
 
@@ -360,7 +360,7 @@ print(plt)
 
 ```{r results="asis", echo=F}
 .file <- fig.dir %&% "/Fig_mtconv_sum_subj_member.pdf"
-#.gg.save(filename = .file, plot = plt, width=5, height=6.5)
+.gg.save(filename = .file, plot = plt, width=5, height=6.5)
 ```
 
 #### UMAP for each marker gene
@@ -381,7 +381,7 @@ for(g in unique(x.melt$gene)) {
 
     print(plt)
     .file <- fig.dir %&% "/Fig_mtconv_gene_umap" %&% g %&% ".pdf"
-    #.gg.save(filename = .file, plot = plt, width=3, height=2.5)
+    .gg.save(filename = .file, plot = plt, width=3, height=2.5)
 }
 ```
 
@@ -403,7 +403,7 @@ for(g in unique(x.melt$gene)) {
 
     print(plt)
     .file <- fig.dir %&% "/Fig_mtconv_gene_tsne" %&% g %&% ".pdf"
-    #.gg.save(filename = .file, plot = plt, width=3, height=2.5)
+    .gg.save(filename = .file, plot = plt, width=3, height=2.5)
 }
 ```
 
@@ -423,7 +423,7 @@ print(plt)
 
 ```{r echo = FALSE, results="asis"}
 .file <- fig.dir %&% "/Fig_count_mtconv_tot.pdf"
-#.gg.save(filename = .file, plot = plt, height=3, width=6)
+.gg.save(filename = .file, plot = plt, height=3, width=6)
 ```
 
 ```{r Fig_count_merged_mtconv_tot, fig.width=2, fig.height=3}
@@ -441,7 +441,7 @@ print(plt)
 
 ```{r echo = FALSE, results="asis"}
 .file <- fig.dir %&% "/Fig_count_merged_mtconv_tot.pdf"
-#.gg.save(filename = .file, plot = plt, width=2, height=3)
+.gg.save(filename = .file, plot = plt, width=2, height=3)
 ```
 
 
@@ -616,7 +616,7 @@ print(plt)
 
 ```{r results="asis", echo = F}
 .file <- fig.dir %&% "/Fig_bbknn_mtreg.pdf"
-#.gg.save(filename = .file, plot = plt, width=6, height=3)
+.gg.save(filename = .file, plot = plt, width=6, height=3)
 ```
 
 ```{r Fig_bbknn_mtreg_sub, fig.width=6, fig.height=3}
@@ -640,7 +640,7 @@ print(plt)
 
 ```{r results="asis", echo = F}
 .file <- fig.dir %&% "/Fig_bbknn_mtreg_sub.pdf"
-#.gg.save(filename = .file, plot = plt, width=6, height=3)
+.gg.save(filename = .file, plot = plt, width=6, height=3)
 ```
 
 ### D. Summary heatmap
@@ -673,7 +673,7 @@ print(plt)
 
 ```{r results="asis", echo=F}
 .file <- fig.dir %&% "/Fig_mtreg_sum_membership.pdf"
-#.gg.save(filename = .file, plot = plt, width=2.2, height=6)
+.gg.save(filename = .file, plot = plt, width=2.2, height=6)
 ```
 
 ```{r include = F}
@@ -701,7 +701,7 @@ print(plt)
 
 ```{r results="asis", echo=F}
 .file <- fig.dir %&% "/Fig_mtreg_sum_subj_member.pdf"
-#.gg.save(filename = .file, plot = plt, width=5.5, height=6.5)
+.gg.save(filename = .file, plot = plt, width=5.5, height=6.5)
 ```
 
 #### UMAP for each marker gene
@@ -722,7 +722,7 @@ for(g in unique(x.melt$gene)) {
 
     print(plt)
     .file <- fig.dir %&% "/Fig_mtreg_gene_umap" %&% g %&% ".pdf"
-    #.gg.save(filename = .file, plot = plt, width=3, height=2.5)
+    .gg.save(filename = .file, plot = plt, width=3, height=2.5)
 }
 ```
 
@@ -744,7 +744,7 @@ for(g in unique(x.melt$gene)) {
 
     print(plt)
     .file <- fig.dir %&% "/Fig_mtreg_gene_tsne" %&% g %&% ".pdf"
-    #.gg.save(filename = .file, plot = plt, width=3, height=2.5)
+    .gg.save(filename = .file, plot = plt, width=3, height=2.5)
 }
 ```
 
@@ -764,7 +764,7 @@ print(plt)
 
 ```{r echo = FALSE, results="asis"}
 .file <- fig.dir %&% "/Fig_count_mtreg_tot.pdf"
-#.gg.save(filename = .file, plot = plt, height=3, width=6)
+.gg.save(filename = .file, plot = plt, height=3, width=6)
 ```
 
 ```{r Fig_count_merged_mtreg_tot, fig.width=2, fig.height=3}
@@ -782,6 +782,6 @@ print(plt)
 
 ```{r echo = FALSE, results="asis"}
 .file <- fig.dir %&% "/Fig_count_merged_mtreg_tot.pdf"
-#.gg.save(filename = .file, plot = plt, width=2, height=3)
+.gg.save(filename = .file, plot = plt, width=2, height=3)
 ```
 
