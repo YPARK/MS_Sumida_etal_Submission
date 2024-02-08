@@ -142,7 +142,7 @@ bulk.mTconv.dt <- read.bulk(.file)
                      n.top = 7)
 ```
 
-### Correlation 0.23 with p-value = 5.8e-98
+### Correlation 0.23 with p-value = 2.21e-98
 
 ![](Fig/STEP3/Fig_DEG_comparison_mTreg-1.png)<!-- -->
 
@@ -167,23 +167,23 @@ bulk.mTconv.dt <- read.bulk(.file)
                      n.top = 5)
 ```
 
-### Correlation 0.26 with p-value = 1.71e-117
+### Correlation 0.26 with p-value = 7.67e-118
 
 ![](Fig/STEP3/Fig_DEG_comparison_mTconv-1.png)<!-- -->
 
 [PDF](Fig/STEP3//Fig_DEG_comparison_mTconv.pdf)
 
-### Found 784 unique genes strongly perturbed by MS with FWER 5%
+### Found 669 unique genes strongly perturbed by MS with FWER 1%
 
-* Up-regulated: 214
+* Up-regulated: 191
 
-* Down-regulated:  608
+* Down-regulated:  515
 
 * Total pairs of genes and cell types: 48,428
 
 
 ```r
-count.deg <- function(.dt, fwer.cutoff = .05) {
+count.deg <- function(.dt, fwer.cutoff = .01) {
     .dt[fwer < fwer.cutoff &
         sign(ADD) == sign(ADE) &
         sign(ADC) == sign(ADE),
@@ -352,6 +352,7 @@ additional.genes <-
 
 ## 1. Write down PRDM1 short and long as .mtx
 .hdr <- "result/step3/deg/prdm1_hc_ms"
+
 if.needed(fileset.list(.hdr), {
 
     .dt <- fread("data/PRDM1/PRDM1_SL.csv.gz")
@@ -385,8 +386,7 @@ if.needed(.file, {
 
     .prdm1.cols <- fread(prdm1.data$col, col.names = "tag", header=F)
 
-    V <- .pca$V[match(.prdm1.cols$tag, .total.cols$tag),
-              , drop = F]
+    V <- .pca$V[match(.prdm1.cols$tag, .total.cols$tag), , drop = F]
 
     .prdm1.cols[, c("barcode", "batch") := tstrsplit(`tag`, split="_")]
     .prdm1.cols[, barcode := gsub(pattern="-1", replacement = "", `barcode`)]
@@ -404,7 +404,8 @@ if.needed(.file, {
                                    r_annot = .matched$celltype,
                                    r_lab_name = c("mTreg","mTconv","nTreg","nTconv"),
                                    r_trt = .matched$disease,
-                                   r_V = V, knn = 50, IMPUTE_BY_KNN = T,
+                                   r_V = V, knn = 50,
+                                   IMPUTE_BY_KNN = T,
                                    NUM_THREADS = 16)
 
     saveRDS(.stat, .file)

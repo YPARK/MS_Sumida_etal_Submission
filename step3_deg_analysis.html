@@ -175,12 +175,12 @@ pre code {
 <li><a href="#comparison-with-the-bulk-deg-results">Comparison with the bulk DEG results</a></li>
 <li><a href="#memory-treg-genes">1. Memory Treg genes</a>
 <ul>
-<li><a href="#correlation-0.23-with-p-value-5.8e-98">Correlation 0.23 with p-value = 5.8e-98</a></li>
+<li><a href="#correlation-0.23-with-p-value-2.21e-98">Correlation 0.23 with p-value = 2.21e-98</a></li>
 </ul></li>
 <li><a href="#memory-tconv-genes">2. Memory Tconv genes</a>
 <ul>
-<li><a href="#correlation-0.26-with-p-value-1.71e-117">Correlation 0.26 with p-value = 1.71e-117</a></li>
-<li><a href="#found-784-unique-genes-strongly-perturbed-by-ms-with-fwer-5">Found 784 unique genes strongly perturbed by MS with FWER 5%</a></li>
+<li><a href="#correlation-0.26-with-p-value-7.67e-118">Correlation 0.26 with p-value = 7.67e-118</a></li>
+<li><a href="#found-669-unique-genes-strongly-perturbed-by-ms-with-fwer-1">Found 669 unique genes strongly perturbed by MS with FWER 1%</a></li>
 </ul></li>
 <li><a href="#show-genes-with-fwer-10-2-overlapping-with-the-bulk-degs">3. Show genes with FWER <span class="math inline">\(&lt; 10^{-2}\)</span> overlapping with the bulk DEGs</a></li>
 <li><a href="#additional-genesproteins">4. Additional genes/proteins</a></li>
@@ -286,8 +286,8 @@ bulk.mTconv.dt &lt;- read.bulk(.file)</code></pre>
                      fdr.cutoff = .01,
                      qv.cutoff = .2,
                      n.top = 7)</code></pre>
-<div id="correlation-0.23-with-p-value-5.8e-98" class="section level3">
-<h3>Correlation 0.23 with p-value = 5.8e-98</h3>
+<div id="correlation-0.23-with-p-value-2.21e-98" class="section level3">
+<h3>Correlation 0.23 with p-value = 2.21e-98</h3>
 <p><img src="Fig/STEP3/Fig_DEG_comparison_mTreg-1.png" /><!-- --></p>
 <p><a href="Fig/STEP3//Fig_DEG_comparison_mTreg.pdf">PDF</a></p>
 </div>
@@ -307,19 +307,19 @@ bulk.mTconv.dt &lt;- read.bulk(.file)</code></pre>
                      fdr.cutoff = .01,
                      qv.cutoff = .2,
                      n.top = 5)</code></pre>
-<div id="correlation-0.26-with-p-value-1.71e-117" class="section level3">
-<h3>Correlation 0.26 with p-value = 1.71e-117</h3>
+<div id="correlation-0.26-with-p-value-7.67e-118" class="section level3">
+<h3>Correlation 0.26 with p-value = 7.67e-118</h3>
 <p><img src="Fig/STEP3/Fig_DEG_comparison_mTconv-1.png" /><!-- --></p>
 <p><a href="Fig/STEP3//Fig_DEG_comparison_mTconv.pdf">PDF</a></p>
 </div>
-<div id="found-784-unique-genes-strongly-perturbed-by-ms-with-fwer-5" class="section level3">
-<h3>Found 784 unique genes strongly perturbed by MS with FWER 5%</h3>
+<div id="found-669-unique-genes-strongly-perturbed-by-ms-with-fwer-1" class="section level3">
+<h3>Found 669 unique genes strongly perturbed by MS with FWER 1%</h3>
 <ul>
-<li><p>Up-regulated: 214</p></li>
-<li><p>Down-regulated: 608</p></li>
+<li><p>Up-regulated: 191</p></li>
+<li><p>Down-regulated: 515</p></li>
 <li><p>Total pairs of genes and cell types: 48,428</p></li>
 </ul>
-<pre class="r"><code>count.deg &lt;- function(.dt, fwer.cutoff = .05) {
+<pre class="r"><code>count.deg &lt;- function(.dt, fwer.cutoff = .01) {
     .dt[fwer &lt; fwer.cutoff &amp;
         sign(ADD) == sign(ADE) &amp;
         sign(ADC) == sign(ADE),
@@ -472,6 +472,7 @@ additional.genes &lt;-
 
 ## 1. Write down PRDM1 short and long as .mtx
 .hdr &lt;- &quot;result/step3/deg/prdm1_hc_ms&quot;
+
 if.needed(fileset.list(.hdr), {
 
     .dt &lt;- fread(&quot;data/PRDM1/PRDM1_SL.csv.gz&quot;)
@@ -505,8 +506,7 @@ if.needed(.file, {
 
     .prdm1.cols &lt;- fread(prdm1.data$col, col.names = &quot;tag&quot;, header=F)
 
-    V &lt;- .pca$V[match(.prdm1.cols$tag, .total.cols$tag),
-              , drop = F]
+    V &lt;- .pca$V[match(.prdm1.cols$tag, .total.cols$tag), , drop = F]
 
     .prdm1.cols[, c(&quot;barcode&quot;, &quot;batch&quot;) := tstrsplit(`tag`, split=&quot;_&quot;)]
     .prdm1.cols[, barcode := gsub(pattern=&quot;-1&quot;, replacement = &quot;&quot;, `barcode`)]
@@ -524,7 +524,8 @@ if.needed(.file, {
                                    r_annot = .matched$celltype,
                                    r_lab_name = c(&quot;mTreg&quot;,&quot;mTconv&quot;,&quot;nTreg&quot;,&quot;nTconv&quot;),
                                    r_trt = .matched$disease,
-                                   r_V = V, knn = 50, IMPUTE_BY_KNN = T,
+                                   r_V = V, knn = 50,
+                                   IMPUTE_BY_KNN = T,
                                    NUM_THREADS = 16)
 
     saveRDS(.stat, .file)
