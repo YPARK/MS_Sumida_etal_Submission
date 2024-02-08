@@ -29,96 +29,6 @@ source("Util-rmd.R")
 source("Util-alg.R")
 ```
 
-```{r helper_functions}
-parse.tag <- function(x) {
-    x[, c("barcode", "batch") := tstrsplit(tag, split="[_]")];
-    x[, barcode := gsub(`barcode`, pattern="-[0-9]$", replacement="")];
-    x[, batch := as.integer(`batch`)]
-    x;
-}
-parse.gene <- function(x){
-    x[, c("ensembl_gene_id","hgnc_symbol") := tstrsplit(`gene`,split="_")]
-    x[, i := 1:.N]
-    return(x)
-}
-
-bbknn.x <- function(.data, .bbknn, .bbknn.umap, .subset = NULL) {
-    .cols <-
-        fread(.data$col, header=F, col.names = "tag") %>%
-        parse.tag() %>%
-        mutate(j = 1:n()) %>%
-        left_join(.bbknn.umap) %>%
-        na.omit() %>%
-        as.data.table()
-
-    .rows <-
-        fread(.data$row, col.names="gene", header=F) %>%
-        parse.gene()
-
-    if(!is.null(.subset)){
-        .rows <- .rows %>%
-            filter(hgnc_symbol %in% .subset |
-                   ensembl_gene_id %in% .subset)
-    }
-
-    vv <- .bbknn$factors.adjusted[.cols$j, , drop = F]
-    X <- sweep(.bbknn$U, 2, .bbknn$D, `*`) %*% t(vv)
-
-    ## double scale
-    X <- apply(X, 2, scale)
-    X.t <- apply(t(X), 2, scale)
-    X <- t(X.t)
-
-    ret <- X[.rows$i, , drop = F]
-    rownames(ret) <- .rows$hgnc_symbol
-    colnames(ret) <- .cols$tag
-    return(ret)
-}
-
-bbknn.x.melt <- function(.data, .bbknn, .bbknn.umap, .subset = NULL) {
-
-    X <- bbknn.x(.data, .bbknn, .bbknn.umap, .subset)
-    ret <- reshape2::melt(X) %>% as.data.table()
-    ret[, tag := Var2]
-    ret[, gene := Var1]
-    ret[, Var1 := NULL]
-    ret[, Var2 := NULL]
-    ret[, x := value]
-    ret[, value := NULL]
-    return(ret)
-}
-
-take.marker.stats <- function(x, dict){
-
-    require(matrixTests)
-
-    ret <- data.table()
-    for(k in unique(dict$membership)){
-        tag.k <- dict[membership == k]$tag
-        x.k <- x[, colnames(x) %in% tag.k, drop = F]
-        y.k <- x[, !(colnames(x) %in% tag.k), drop = F]
-        ## wilcox within vs. outside
-        wilcox.k <- row_wilcoxon_twosample(x.k, y.k)
-        ## t-test
-        ttest.k <- row_t_welch(x.k, y.k)
-        ret.k <- data.table(
-            gene = rownames(x),
-            membership = k,
-            wilcox.p = wilcox.k$pvalue,
-            ttest.t = ttest.k$statistic,
-            mean = ttest.k$mean.x,
-            mean.outside = ttest.k$mean.y,
-            sd = sqrt(ttest.k$var.x),
-            sd.outside = sqrt(ttest.k$var.y),
-            ttest.p = ttest.k$pvalue)
-        ret <- rbind(ret, ret.k)
-    }
-    return(ret)
-}
-```
-
-# Results
-
 * Marker genes well-known for mTconv cell subtype classification
 
 ```{r}
@@ -146,256 +56,15 @@ take.marker.stats <- function(x, dict){
 
 * Goal: Identify cellular states/subtypes in memory T cells
 
-```{r read_sample_info, inclue = FALSE}
-.sample.info <-
-    readxl::read_xlsx("data/Hashing list MS Treg project.xlsx", 1) %>%
-    mutate(disease=substr(`subject`,1,2)) %>%
-    mutate(hash = gsub(pattern="#", replacement="", `hash`)) %>%
-    mutate(hash = as.integer(hash)) %>%
-    as.data.table()
-```
-
-```{r read_hash_info, include = FALSE}
+```{r read_hash_info, inclue = FALSE}
 .hash.hdr <- "result/step1/hash"
 .hash.data <- fileset.list(.hash.hdr)
-
-.hash.mtx <- read.dense(.hash.data$mtx)
-.hash.argmax <- apply(.hash.mtx, 2, which.max)
-
-.hash.cells <- .hash.data$col %>%
-    fread(header=F, col.names="tag") %>%
-    parse.tag() %>%
-    mutate(hash = .hash.argmax)
-
-.hash.info <-
-    left_join(.hash.cells, .sample.info)
+.hash.info <- read.hash(.hash.data)
 ```
 
 ```{r read_cell_annot}
 annot.dt <- fread("Tab/step2_celltype.txt.gz")
 ```
-
-## 1. Memory T conventional
-
-```{r take_subset_mtconv}
-.full.data <- fileset.list("result/step1/matrix_final")
-.mkdir("result/step4/")
-.data <- fileset.list("result/step4/mtconv")
-
-if.needed(.data, {
-    .tags <- unique(annot.dt[celltype == "mTconv"]$tag)
-    .data <-
-        rcpp_mmutil_copy_selected_columns(.full.data$mtx,
-                                          .full.data$row,
-                                          .full.data$col,
-                                          .tags,
-                                          "result/step4/mtconv")
-})
-```
-
-### Clustering cells by batch-balancing k-nearest neighbour graph
-
-```{r run_bbknn_mtconv}
-.file <- "result/step4/mtconv_bbknn.rds"
-if.needed(.file, {
-
-    .batches <-
-        fread(.data$col, col.names="tag", header=F) %>%
-        parse.tag() %>%
-        left_join(.hash.info)
-
-    bb <- .batches %>%
-        mutate(b = batch %&% "_" %&% disease) %>%
-        select(b) %>%
-        unlist()
-
-    .bbknn <- rcpp_mmutil_bbknn_svd(.data$mtx, bb,
-                                    knn = 30, RANK = 50,
-                                    EM_ITER = 20,
-                                    TAKE_LN = TRUE,
-                                    NUM_THREADS = 16)
-    saveRDS(.bbknn, .file)
-})
-.bbknn <- readRDS(.file)
-```
-
-```{r bbknn_umap_leiden_mtconv}
-.file <- "result/step4/mtconv_bbknn_leiden.txt.gz"
-if.needed(.file, {
-    .cells <- readLines(.data$col)
-    .bbknn.umap <- run.bbknn.umap(.bbknn$knn,
-                                  .cells,
-                                  symmetrize=T,
-                                  min_dist=0.01,
-                                  spread=5,
-                                  res=.5)
-    fwrite(.bbknn.umap, .file)
-})
-
-.bbknn.umap <- fread(.file)
-.bbknn.umap[, membership := as.factor(membership)]
-```
-
-```{r include = F}
-.cells <-
-    data.table::copy(.bbknn.umap) %>%
-    parse.tag() %>%
-    left_join(.hash.info) %>%
-    select(barcode, batch, hash, subject, tag, membership,
-           umap1, umap2, disease)
-```
-
-```{r echo = F, results = "asis"}
-.file <- "Tab/step4_mtconv_cluster.txt.gz"
-.mkdir("Tab/")
-if.needed(.file,
-{
-    fwrite(.cells, .file, sep = "\t", col.names = T)
-})
-cat("[**DOWNLOAD:** mTconv clustering results]("%&% .file %&% ")\n\n")
-```
-
-### What are the cell-cluster-specific marker genes?
-
-```{r find_mtconv_marker_genes}
-.mkdir("Tab/")
-.file <- "Tab/step4_mtconv_gene_stat.txt.gz"
-if.needed(.file, {
-    x <- bbknn.x(.data, .bbknn, .bbknn.umap)
-    marker.stat <- take.marker.stats(x, .bbknn.umap)
-    fwrite(marker.stat, .file, sep = "\t", col.names = T)
-})
-marker.stat <- fread(.file, sep = "\t")
-```
-
-```{r echo = F, results = "asis"}
-cat("[**DOWNLOAD:** mTconv marker gene statistics]("%&% .file %&% ")\n\n")
-```
-
-### Non-linear embedding to confirm the cell clusters of mTconv cells
-
-```{r Fig_bbknn_mtconv, fig.width=3, fig.height=3}
-.lab <-
-    .cells[,
-           .(umap1=median(umap1), umap2=median(umap2)),
-           by = .(membership)]
-.cols <- .more.colors(nrow(.lab), nc.pal=12)
-plt <-
-    .gg.plot(.bbknn.umap, aes(umap1, umap2, color=membership)) +
-    xlab("UMAP1") + ylab("UMAP2") +
-    ggrastr::rasterise(geom_point(stroke=0, alpha=.8, size=.7), dpi=300) +
-    geom_text(aes(label=membership), data=.lab, size=4, color="black") +
-    scale_color_manual(values = .cols, guide="none")
-
-print(plt)
-```
-
-```{r results="asis", echo = F}
-.file <- fig.dir %&% "/Fig_bbknn_mtconv.pdf"
-.gg.save(filename = .file, plot = plt, width=3, height=3)
-```
-
-```{r Fig_bbknn_mtconv_sub, fig.width=3, fig.height=3}
-.cols <- .more.colors(10, nc.pal=7, .palette="Set1")
-plt <-
-    .gg.plot(.cells, aes(umap1, umap2, color=as.factor(subject))) +
-    xlab("UMAP1") + ylab("UMAP2") +
-    ggrastr::rasterise(geom_point(stroke=0, alpha=.8, size=.7), dpi=300) +
-    scale_color_manual(values = .cols, guide="none")
-
-print(plt)
-```
-
-```{r results="asis", echo = F}
-.file <- fig.dir %&% "/Fig_bbknn_mtconv_sub.pdf"
-.gg.save(filename = .file, plot = plt, width=3, height=3)
-```
-
-```{r select_mtconv_marker_genes}
-x.melt <- bbknn.x.melt(.data, .bbknn, .bbknn.umap, .markers)
-```
-
-#### Summary heatmap
-
-```{r}
-.dt <- x.melt %>% left_join(.cells)
-.sum.subj <- .dt[, .(x = median(x)), by = .(gene, subject, membership)]
-.sum.subj[, x := scale(x), by = .(gene)]
-```
-
-```{r Fig_mtconv_sum_membership, fig.width=1.8, fig.height=6.5}
-.sum <-
-    .sum.subj[, .(x = median(x)), by = .(gene, membership)] %>%
-    mutate(col = `gene`, row = membership, weight = x) %>%
-    col.order(1:10, TRUE) %>%
-    as.data.table()
-
-plt <-
-    .gg.plot(.sum, aes(row, col, fill=pmin(pmax(weight, -1.5), 1.5)))+
-    geom_tile(linewidth=.1, color="black") +
-    scale_fill_distiller("", palette = "RdBu", direction = -1) +
-    theme(legend.key.width = unit(.2,"lines")) +
-    theme(legend.key.height = unit(.5,"lines")) +
-    xlab("cell clusters") + ylab("features")
-print(plt)
-```
-
-```{r results="asis", echo=F}
-.file <- fig.dir %&% "/Fig_mtconv_sum_membership.pdf"
-.gg.save(filename = .file, plot = plt, width=1.8, height=6)
-```
-
-```{r}
-.marker.order <- sort(unique(.sum$col))
-```
-
-```{r Fig_mtconv_sum_subj_member, fig.width=5, fig.height=6.5}
-.dt <- copy(.sum.subj) %>%
-    mutate(gene = factor(`gene`, .marker.order)) %>%
-    mutate(t = subject %&% "." %&% membership)
-
-plt <-
-    .gg.plot(.dt, aes(`t`, `gene`, fill=pmin(pmax(`x`, -1.5), 1.5))) +
-    facet_grid(. ~ membership, space="free", scales="free")+
-    geom_tile(linewidth=.1, color="black") +
-    scale_fill_distiller("", palette = "RdBu", direction = -1) +
-    theme(legend.key.width = unit(.2,"lines")) +
-    theme(legend.key.height = unit(.5,"lines")) +
-    theme(axis.ticks.x = element_blank()) +
-    theme(axis.text.x = element_blank()) +
-    xlab("subjects") + ylab("features")
-
-print(plt)
-```
-
-```{r results="asis", echo=F}
-.file <- fig.dir %&% "/Fig_mtconv_sum_subj_member.pdf"
-.gg.save(filename = .file, plot = plt, width=5, height=6)
-```
-
-**NOTE** The colors are standardized `log1p` expression across genes and cells.
-
-```{r Fig_mtconv_gene_umap, fig.width=3, fig.height=2.5, results="asis"}
-for(g in unique(x.melt$gene)) {
-    .dt <- left_join(x.melt[gene == g], .cells)
-    .aes <- aes(umap1, umap2, color=pmax(pmin(x, 3), -3))
-
-    plt <-
-        .gg.plot(.dt[order(`x`)], .aes) +
-        xlab("UMAP1") + ylab("UMAP2") +
-        ggrastr::rasterise(geom_point(stroke = 0, size=.7), dpi=300) +
-        theme(legend.key.width = unit(.2,"lines")) +
-        theme(legend.key.height = unit(.5,"lines")) +
-        scale_color_distiller(g, palette = "RdBu", direction = -1) +
-        ggtitle(g)
-
-    print(plt)
-    .file <- fig.dir %&% "/Fig_mtconv_gene_umap" %&% g %&% ".pdf"
-    .gg.save(filename = .file, plot = plt, width=3, height=2.5)
-}
-```
-
-### Basic statistics
 
 ```{r include=FALSE}
 .sum.stat.batch <- function(.dt) {
@@ -432,201 +101,217 @@ for(g in unique(x.melt$gene)) {
 }
 ```
 
-```{r Fig_count_mtconv_tot, fig.width=6, fig.height=3}
-.stat <-
-    .cells[,
-           .(N = .N),
-           by=.(batch, membership, disease)] %>%
-    .sum.stat.batch()
+## 1. Memory T conventional
 
-plt <- .plt.sum.stat(.stat) + ggtitle("mTconv")
-print(plt)
-```
-
-```{r echo = FALSE, results="asis"}
-.file <- fig.dir %&% "/Fig_count_mtconv_tot.pdf"
-.gg.save(filename = .file, plot = plt, height=3, width=6)
-```
-
-```{r Fig_count_merged_mtconv_tot, fig.height=3, fig.width=2.2}
-.stat.tot <-
-    .cells[,
-           .(N = .N),
-           by=.(membership, disease)] %>%
-    .sum.stat.tot %>%
-    mutate(batch = "(N=" %&% num.int(sum(.stat$N)) %&% ")")
-
-plt <- .plt.sum.stat(.stat.tot) + ggtitle("mTconv")
-print(plt)
-```
-
-```{r echo = FALSE, results="asis"}
-.file <- fig.dir %&% "/Fig_count_merged_mtconv_tot.pdf"
-.gg.save(filename = .file, plot = plt, height=3, width=2.2)
-```
-
-## 2. Memory Treg cells
-
-```{r take_subset_mtreg}
-.full.data <- fileset.list("result/step1/matrix_final")
+```{r take_subset_mtconv}
+.full.data <- fileset.list("result/step2/matrix_final")
 .mkdir("result/step4/")
-.data <- fileset.list("result/step4/mtreg")
+.data <- fileset.list("result/step4/mtconv")
 
 if.needed(.data, {
-    .tags <- unique(annot.dt[celltype == "mTreg"]$tag)
+    .tags <- unique(annot.dt[celltype == "mTconv"]$tag)
     .data <-
         rcpp_mmutil_copy_selected_columns(.full.data$mtx,
                                           .full.data$row,
                                           .full.data$col,
                                           .tags,
-                                          "result/step4/mtreg")
+                                          "result/step4/mtconv")
 })
 ```
 
-### Clustering cells by batch-balancing k-nearest neighbour graph
+### A. Clustering cells by batch-balancing k-nearest neighbour graph
 
-```{r run_bbknn_mtreg}
-.file <- "result/step4/mtreg_bbknn.rds"
+```{r run_bbknn_mtconv}
+.file <- "result/step4/mtconv_bbknn.rds"
+
 if.needed(.file, {
+    .batches <- take.batch.info(.data)
 
-    .batches <-
-        fread(.data$col, col.names="tag", header=F) %>%
-        parse.tag() %>%
-        left_join(.hash.info)
+    .bbknn <-
+        rcpp_mmutil_bbknn_mtx(.data$mtx,
+                              r_batches = .batches, # batch label
+                              RANK = 30,            # PCs
+                              knn = 50,             # 20 nn per batch
+                              RECIPROCAL_MATCH = T, # crucial
+                              EM_ITER = 20,         # EM steps
+                              NUM_THREADS = 16,
+                              TAKE_LN = T,
+                              USE_SINGULAR_VALUES = F)
 
-    bb <- .batches %>%
-        mutate(b = batch %&% "_" %&% disease) %>%
-        select(b) %>%
-        unlist()
-
-    .bbknn <- rcpp_mmutil_bbknn_svd(.data$mtx, bb,
-                                    knn = 30, RANK = 50,
-                                    EM_ITER = 20,
-                                    TAKE_LN = TRUE,
-                                    NUM_THREADS = 16)
     saveRDS(.bbknn, .file)
 })
 .bbknn <- readRDS(.file)
 ```
 
-
-```{r bbknn_umap_leiden_mtreg}
-.file <- "result/step4/mtreg_bbknn_leiden.txt.gz"
-.cells <- readLines(.data$col)
-
+```{r bbknn_leiden_mtconv}
+.file <- "Tab/step4_mtconv_leiden.txt.gz"
 if.needed(.file, {
-    .bbknn.umap <- run.bbknn.umap(.bbknn$knn,
-                                  .cells,
-                                  symmetrize=T,
-                                  min_dist=0.01,
-                                  spread=5,
-                                  res=.5)
-    fwrite(.bbknn.umap, .file)
+    .tags <- readLines(.data$col)
+    .leiden <- run.leiden(.bbknn$knn.adj, .tags, res=.3, nrepeat = 100, min.size = 10)
+    fwrite(.leiden, .file)
 })
-
-.bbknn.umap <- fread(.file)
-.bbknn.umap[, membership := as.factor(membership)]
-```
-
-```{r include = F}
-.cells <-
-    data.table::copy(.bbknn.umap) %>%
-    parse.tag() %>%
-    left_join(.hash.info) %>%
-    select(barcode, batch, hash, subject, tag, membership,
-           umap1, umap2, disease)
-```
-
-### Merge clusters 3 and 6
-
-We merged the clusters \#3 and \#6 since they show similar gene expression patterns for known marker genes. Merge cells in the cluster \#6 to \#3.
-
-```{r}
-.bbknn.umap[membership == 6, membership := 3]
-.bbknn.umap[, membership := factor(membership, 1:5)]
-.cells[membership == 6, membership := 3]
-.cells[, membership := factor(membership, 1:5)]
+.leiden <- fread(.file)
 ```
 
 ```{r echo = F, results = "asis"}
-.file <- "Tab/step4_mtreg_cluster.txt.gz"
 .mkdir("Tab/")
-if.needed(.file,
-{
-    fwrite(.cells, .file, sep = "\t", col.names = T)
-})
-cat("[**DOWNLOAD:** mTreg clustering results]("%&% .file %&% ")\n\n")
+cat("[**DOWNLOAD:** mTconv Leiden results]("%&% .file %&% ")\n\n")
 ```
 
-### What are the cell-cluster-specific marker genes?
-
-```{r find_mtreg_marker_genes}
-.mkdir("Tab/")
-.file <- "Tab/step4_mtreg_gene_stat.txt.gz"
+```{r calculate_tumap_coordinates_mtconv}
+.file <- "Tab/step4_tumap_mtconv.txt.gz"
 if.needed(.file, {
-    x <- bbknn.x(.data, .bbknn, .bbknn.umap)
-    marker.stat <- take.marker.stats(x, .bbknn.umap)
+
+    set.seed(1)
+    .umap <- uwot::tumap(.bbknn$factors.adjusted,
+                         learning_rate=.1,
+                         n_epochs=3000,
+                         n_sgd_threads=16,
+                         verbose=T,
+                         init="lvrandom",
+                         scale=T)
+
+    .tags <- readLines(.data$col)
+
+    colnames(.umap) <- "UMAP" %&% 1:ncol(.umap)
+
+    .umap.dt <-
+        data.table(.umap, tag = .tags) %>%
+        left_join(.leiden) %>%
+        na.omit()
+
+    fwrite(.umap.dt, .file)
+})
+.umap.dt <- fread(.file)
+```
+
+```{r echo = F, results = "asis"}
+.mkdir("Tab/")
+cat("[**DOWNLOAD:** mTconv UMAP results]("%&% .file %&% ")\n\n")
+```
+
+```{r calculate_tSNE_coordinates_mtconv}
+.file <- "Tab/step4_tsne_mtconv.txt.gz"
+if.needed(.file, {
+    .tsne <- Rtsne::Rtsne(.bbknn$factors.adjusted,
+                          check_duplicates = FALSE,
+                          verbose = T,
+                          num_threads = 16)
+
+    .tags <- readLines(.data$col)
+
+    colnames(.tsne$Y) <- "tSNE" %&% 1:ncol(.tsne$Y)
+
+    .tsne.dt <- data.table(.tsne$Y, tag = .tags) %>%
+        left_join(.leiden) %>%
+        na.omit()
+
+    fwrite(.tsne.dt, .file)
+})
+.tsne.dt <- fread(.file)
+```
+
+```{r echo = F, results = "asis"}
+.mkdir("Tab/")
+cat("[**DOWNLOAD:** mTconv tSNE results]("%&% .file %&% ")\n\n")
+```
+
+
+### B. What are the cell-cluster-specific marker genes?
+
+```{r find_mtconv_marker_genes}
+.mkdir("Tab/")
+.file <- "Tab/step4_mtconv_gene_stat.txt.gz"
+if.needed(.file, {
+    x <- bbknn.x(.data, .bbknn)
+    marker.stat <- take.marker.stats(x, .leiden)
     fwrite(marker.stat, .file, sep = "\t", col.names = T)
 })
 marker.stat <- fread(.file, sep = "\t")
 ```
 
 ```{r echo = F, results = "asis"}
-cat("[**DOWNLOAD:** mTreg marker gene statistics]("%&% .file %&% ")\n\n")
+cat("[**DOWNLOAD:** mTconv marker gene statistics]("%&% .file %&% ")\n\n")
 ```
 
-### Non-linear embedding to confirm the cell clusters of mTreg cells
 
-```{r Fig_bbknn_mtreg, fig.width=3, fig.height=3}
+
+### C. Non-linear embedding to confirm the cell clusters of mTconv cells
+
+```{r Fig_bbknn_mtconv, fig.width=6, fig.height=3}
+.cells <-
+    left_join(.umap.dt, .tsne.dt) %>%
+    left_join(.leiden) %>%
+    left_join(.hash.info) %>%
+    na.omit()
+
 .lab <-
     .cells[,
-           .(umap1=median(umap1), umap2=median(umap2)),
-           by = .(membership)]
+           .(UMAP1=median(UMAP1),
+             UMAP2=median(UMAP2),
+             tSNE1=median(tSNE1),
+             tSNE2=median(tSNE2)),
+           by = .(component, membership)]
 
 .cols <- .more.colors(nrow(.lab), nc.pal=12)
 
-plt <-
-    .gg.plot(.bbknn.umap, aes(umap1, umap2, color=membership)) +
-    xlab("UMAP1") + ylab("UMAP2") +
+p1 <-
+    .gg.plot(.cells, aes(UMAP1, UMAP2, color=as.factor(membership))) +
     ggrastr::rasterise(geom_point(stroke=0, alpha=.8, size=.7), dpi=300) +
     geom_text(aes(label=membership), data=.lab, size=4, color="black") +
     scale_color_manual(values = .cols, guide="none")
 
-print(plt)
+p2 <-
+    .gg.plot(.cells, aes(tSNE1, tSNE2, color=as.factor(membership))) +
+    ggrastr::rasterise(geom_point(stroke=0, alpha=.8, size=.7), dpi=300) +
+    geom_text(aes(label=membership), data=.lab, size=4, color="black") +
+    scale_color_manual(values = .cols, guide="none")
 
-.file <- fig.dir %&% "/Fig_bbknn_mtreg.pdf"
-.gg.save(filename = .file, plot = plt, width=3, height=3)
+plt <- p1 | p2
+print(plt)
 ```
 
-#### Subject-level variation is not the major source of this clustering pattern.
+```{r results="asis", echo = F}
+.file <- fig.dir %&% "/Fig_bbknn_mtconv.pdf"
+#.gg.save(filename = .file, plot = plt, width=6, height=3)
+```
 
-```{r Fig_bbknn_mtreg_sub, fig.width=3, fig.height=3}
+```{r Fig_bbknn_mtconv_sub, fig.width=6, fig.height=3}
 .cols <- .more.colors(10, nc.pal=7, .palette="Set1")
-plt <-
-    .gg.plot(.cells, aes(umap1, umap2, color=as.factor(subject))) +
+
+p1 <-
+    .gg.plot(.cells, aes(UMAP1, UMAP2, color=as.factor(subject))) +
     xlab("UMAP1") + ylab("UMAP2") +
     ggrastr::rasterise(geom_point(stroke=0, alpha=.8, size=.7), dpi=300) +
     scale_color_manual(values = .cols, guide="none")
+
+p2 <-
+    .gg.plot(.cells, aes(UMAP1, UMAP2, color=as.factor(subject))) +
+    xlab("UMAP1") + ylab("UMAP2") +
+    ggrastr::rasterise(geom_point(stroke=0, alpha=.8, size=.7), dpi=300) +
+    scale_color_manual(values = .cols, guide="none")
+
+plt <- p1 | p2
 print(plt)
-.file <- fig.dir %&% "/Fig_bbknn_mtreg_sub.pdf"
-.gg.save(filename = .file, plot = plt, width=3, height=3)
 ```
 
-#### Confirm cell type identity based on known marker genes?
-
-```{r select_mtreg_marker_genes}
-x.melt <- bbknn.x.melt(.data, .bbknn, .bbknn.umap, .markers)
+```{r results="asis", echo = F}
+.file <- fig.dir %&% "/Fig_bbknn_mtconv_sub.pdf"
+#.gg.save(filename = .file, plot = plt, width=6, height=3)
 ```
 
-```{r}
-.dt <- x.melt %>% left_join(.cells)
+### D. Summary heatmap
+
+**NOTE** The colors are standardized `log1p` expression across genes and cells.
+
+```{r select_mtconv_marker_genes}
+x.melt <- bbknn.x.melt(.data, .bbknn, .markers)
+.dt <- x.melt %>% left_join(.cells) %>% na.omit()
 .sum.subj <- .dt[, .(x = median(x)), by = .(gene, subject, membership)]
 .sum.subj[, x := scale(x), by = .(gene)]
 ```
 
-#### Summary heatmap
-
-```{r Fig_mtreg_sum_membership, fig.width=2, fig.height=6.5}
+```{r Fig_mtconv_sum_membership, fig.width=1.8, fig.height=6.5}
 .sum <-
     .sum.subj[, .(x = median(x)), by = .(gene, membership)] %>%
     mutate(col = `gene`, row = membership, weight = x) %>%
@@ -640,17 +325,21 @@ plt <-
     theme(legend.key.width = unit(.2,"lines")) +
     theme(legend.key.height = unit(.5,"lines")) +
     xlab("cell clusters") + ylab("features")
-
 print(plt)
-.file <- fig.dir %&% "/Fig_mtreg_sum_membership.pdf"
-.gg.save(filename = .file, plot = plt, width=2, height=6)
 ```
 
-```{r}
+```{r results="asis", echo=F}
+.file <- fig.dir %&% "/Fig_mtconv_sum_membership.pdf"
+#.gg.save(filename = .file, plot = plt, width=1.8, height=6.5)
+```
+
+
+```{r include = F}
 .marker.order <- sort(unique(.sum$col))
 ```
 
-```{r Fig_mtreg_sum_subj_member, fig.width=6, fig.height=6.5}
+
+```{r Fig_mtconv_sum_subj_member, fig.width=5, fig.height=6.5}
 .dt <- copy(.sum.subj) %>%
     mutate(gene = factor(`gene`, .marker.order)) %>%
     mutate(t = subject %&% "." %&% membership)
@@ -667,17 +356,19 @@ plt <-
     xlab("subjects") + ylab("features")
 
 print(plt)
-.file <- fig.dir %&% "/Fig_mtreg_sum_subj_memberhip.pdf"
-.gg.save(filename = .file, plot = plt, width=6, height=6)
 ```
 
-**NOTE** The colors are standardized `log1p` expression across genes and cells.
+```{r results="asis", echo=F}
+.file <- fig.dir %&% "/Fig_mtconv_sum_subj_member.pdf"
+#.gg.save(filename = .file, plot = plt, width=5, height=6.5)
+```
 
-```{r Fig_mtreg_gene_umap, fig.width=3, fig.height=2.5}
-.genes <- unique(x.melt$gene)
-for(g in .genes) {
+#### UMAP for each marker gene
+
+```{r Fig_mtconv_gene_umap, fig.width=3, fig.height=2.5, results="asis"}
+for(g in unique(x.melt$gene)) {
     .dt <- left_join(x.melt[gene == g], .cells)
-    .aes <- aes(umap1, umap2, color=pmax(pmin(x, 3), -3))
+    .aes <- aes(UMAP1, UMAP2, color=pmax(pmin(x, 3), -3))
 
     plt <-
         .gg.plot(.dt[order(`x`)], .aes) +
@@ -689,128 +380,408 @@ for(g in .genes) {
         ggtitle(g)
 
     print(plt)
-    .file <- fig.dir %&% "/Fig_mtreg_gene_umap_" %&% g %&% ".pdf"
-    .gg.save(filename = .file, plot = plt, width=3, height=2.5)
+    .file <- fig.dir %&% "/Fig_mtconv_gene_umap" %&% g %&% ".pdf"
+    #.gg.save(filename = .file, plot = plt, width=3, height=2.5)
 }
 ```
 
-```{r Fig_count_mtreg_tot, fig.width=6, fig.height=3}
+#### tSNE for each marker gene
+
+```{r Fig_mtconv_gene_tsne, fig.width=3, fig.height=2.5, results="asis"}
+for(g in unique(x.melt$gene)) {
+    .dt <- left_join(x.melt[gene == g], .cells)
+    .aes <- aes(tSNE1, tSNE2, color=pmax(pmin(x, 3), -3))
+
+    plt <-
+        .gg.plot(.dt[order(`x`)], .aes) +
+        xlab("TSNE1") + ylab("TSNE2") +
+        ggrastr::rasterise(geom_point(stroke = 0, size=.7), dpi=300) +
+        theme(legend.key.width = unit(.2,"lines")) +
+        theme(legend.key.height = unit(.5,"lines")) +
+        scale_color_distiller(g, palette = "RdBu", direction = -1) +
+        ggtitle(g)
+
+    print(plt)
+    .file <- fig.dir %&% "/Fig_mtconv_gene_tsne" %&% g %&% ".pdf"
+    #.gg.save(filename = .file, plot = plt, width=3, height=2.5)
+}
+```
+
+### E. Basic statistics
+
+```{r Fig_count_mtconv_tot, fig.width=6, fig.height=3}
 .stat <-
     .cells[,
            .(N = .N),
-           by=.(batch, membership, disease)] %>%
+           by=.(batch, membership, component, disease)] %>%
+    mutate(membership = as.factor(membership)) %>% 
     .sum.stat.batch()
 
-plt <- .plt.sum.stat(.stat) + ggtitle("mTreg")
+plt <- .plt.sum.stat(.stat) + ggtitle("mTconv")
 print(plt)
 ```
 
 ```{r echo = FALSE, results="asis"}
-.file <- fig.dir %&% "/Fig_count_mtreg_tot.pdf"
-.gg.save(filename = .file, plot = plt, height=3, width=6)
+.file <- fig.dir %&% "/Fig_count_mtconv_tot.pdf"
+#.gg.save(filename = .file, plot = plt, height=3, width=6)
 ```
 
-```{r Fig_count_merged_mtreg_tot, fig.height=3, fig.width=2.2}
+```{r Fig_count_merged_mtconv_tot, fig.width=2, fig.height=3}
 .stat.tot <-
     .cells[,
            .(N = .N),
            by=.(membership, disease)] %>%
-    .sum.stat.tot %>%
+    mutate(membership = as.factor(membership)) %>% 
+    .sum.stat.tot() %>%
     mutate(batch = "(N=" %&% num.int(sum(.stat$N)) %&% ")")
 
-plt <- .plt.sum.stat(.stat.tot) + ggtitle("mTreg")
+plt <- .plt.sum.stat(.stat.tot) + ggtitle("mTconv")
 print(plt)
 ```
 
 ```{r echo = FALSE, results="asis"}
-.file <- fig.dir %&% "/Fig_count_merged_mtreg_tot.pdf"
-.gg.save(filename = .file, plot = plt, height=3, width=2.2)
+.file <- fig.dir %&% "/Fig_count_merged_mtconv_tot.pdf"
+#.gg.save(filename = .file, plot = plt, width=2, height=3)
 ```
 
 
-### PRDM1 vs. SGK1 (also standardized across cells)
+## 2. Memory Treg cells
 
-```{r Fig_mtreg_gene_umap_other, fig.width=3, fig.height=2.5, echo = F}
-x.melt <- bbknn.x.melt(.data, .bbknn, .bbknn.umap, c("SGK1", "PRDM1"))
+```{r take_subset_mtreg}
+.full.data <- fileset.list("result/step2/matrix_final")
+.mkdir("result/step4/")
+.data <- fileset.list("result/step4/mtreg")
 
-for(g in unique(x.melt$gene)) {
-    .dt <- left_join(x.melt[gene == g], .cells)
-    .aes <- aes(umap1, umap2, color=pmax(pmin(x, 3), -3))
-
-    plt <-
-        .gg.plot(.dt[order(`x`)], .aes) +
-        xlab("UMAP1") + ylab("UMAP2") +
-        ggrastr::rasterise(geom_point(stroke = 0, size=.7), dpi=300) +
-        theme(legend.key.width = unit(.2,"lines")) +
-        theme(legend.key.height = unit(.5,"lines")) +
-        scale_color_distiller(g, palette = "RdBu", direction = -1) +
-        ggtitle(g)
-
-    print(plt)
-    .file <- fig.dir %&% "/Fig_mtreg_gene_umap_" %&% g %&% ".pdf"
-    .gg.save(filename = .file, plot = plt, width=3, height=2.5)
-}
+if.needed(.data, {
+    .tags <- unique(annot.dt[celltype == "mTreg"]$tag)
+    .data <-
+        rcpp_mmutil_copy_selected_columns(.full.data$mtx,
+                                          .full.data$row,
+                                          .full.data$col,
+                                          .tags,
+                                          "result/step4/mtreg")
+})
 ```
 
-### What about the PRDM1 long and short isoforms?
+### A. Clustering cells by batch-balancing k-nearest neighbour graph
 
-```{r Fig_mtreg_PRDM1_iso_umap, fig.width=6, fig.height=2.6, echo = F}
-prdm.dt <- fread("data/PRDM1/PRDM1_SL.csv.gz") %>%
-    select(-hash)
+```{r run_bbknn_mtreg}
+.file <- "result/step4/mtreg_bbknn.rds"
 
-.dt <-
-    copy(.cells) %>%
-    left_join(prdm.dt) %>%
-    na.omit() %>%
-    as.data.table()
+if.needed(.file, {
+    .batches <- take.batch.info(.data)
 
-.aes <- aes(umap1, umap2, colour=pmin(PRDM1_short, 3))
+    .bbknn <-
+        rcpp_mmutil_bbknn_mtx(.data$mtx,
+                              r_batches = .batches, # batch label
+                              RANK = 30,            # PCs
+                              knn = 50,             # 20 nn per batch
+                              RECIPROCAL_MATCH = T, # crucial
+                              EM_ITER = 20,         # EM steps
+                              NUM_THREADS = 16,
+                              TAKE_LN = T,
+                              USE_SINGULAR_VALUES = F)
+
+    saveRDS(.bbknn, .file)
+})
+.bbknn <- readRDS(.file)
+```
+
+```{r bbknn_leiden_mtreg}
+.file <- "Tab/step4_mtreg_leiden.txt.gz"
+if.needed(.file, {
+    .tags <- readLines(.data$col)
+    .leiden <- run.leiden(.bbknn$knn.adj, .tags, res=.3, nrepeat = 100, min.size = 10)
+    fwrite(.leiden, .file)
+})
+.leiden <- fread(.file)
+```
+
+```{r echo = F, results = "asis"}
+.mkdir("Tab/")
+cat("[**DOWNLOAD:** mTreg Leiden results]("%&% .file %&% ")\n\n")
+```
+
+```{r calculate_tumap_coordinates_mtreg}
+.file <- "Tab/step4_tumap_mtreg.txt.gz"
+if.needed(.file, {
+
+    set.seed(1)
+    .umap <- uwot::tumap(.bbknn$factors.adjusted,
+                         learning_rate=.1,
+                         n_epochs=3000,
+                         n_sgd_threads=16,
+                         verbose=T,
+                         init="lvrandom",
+                         scale=T)
+
+    .tags <- readLines(.data$col)
+
+    colnames(.umap) <- "UMAP" %&% 1:ncol(.umap)
+
+    .umap.dt <-
+        data.table(.umap, tag = .tags) %>%
+        left_join(.leiden) %>%
+        na.omit()
+
+    fwrite(.umap.dt, .file)
+})
+.umap.dt <- fread(.file)
+```
+
+```{r echo = F, results = "asis"}
+.mkdir("Tab/")
+cat("[**DOWNLOAD:** mtreg UMAP results]("%&% .file %&% ")\n\n")
+```
+
+```{r calculate_tSNE_coordinates_mtreg}
+.file <- "Tab/step4_tsne_mtreg.txt.gz"
+if.needed(.file, {
+
+    .tsne <- Rtsne::Rtsne(.bbknn$factors.adjusted,
+                          check_duplicates = FALSE,
+                          verbose = T,
+                          num_threads = 16)
+
+    .tags <- readLines(.data$col)
+
+    colnames(.tsne$Y) <- "tSNE" %&% 1:ncol(.tsne$Y)
+
+    .tsne.dt <- data.table(.tsne$Y, tag = .tags) %>%
+        left_join(.leiden) %>%
+        na.omit()
+
+    fwrite(.tsne.dt, .file)
+})
+.tsne.dt <- fread(.file)
+```
+
+```{r echo = F, results = "asis"}
+.mkdir("Tab/")
+cat("[**DOWNLOAD:** mtreg tSNE results]("%&% .file %&% ")\n\n")
+```
+
+
+### B. What are the cell-cluster-specific marker genes?
+
+```{r find_mtreg_marker_genes}
+.mkdir("Tab/")
+.file <- "Tab/step4_mtreg_gene_stat.txt.gz"
+if.needed(.file, {
+    x <- bbknn.x(.data, .bbknn)
+    marker.stat <- take.marker.stats(x, .leiden)
+    fwrite(marker.stat, .file, sep = "\t", col.names = T)
+})
+marker.stat <- fread(.file, sep = "\t")
+```
+
+```{r echo = F, results = "asis"}
+cat("[**DOWNLOAD:** mTreg marker gene statistics]("%&% .file %&% ")\n\n")
+```
+
+### C. Non-linear embedding to confirm the cell clusters of mtreg cells
+
+```{r Fig_bbknn_mtreg, fig.width=6, fig.height=3}
+.cells <-
+    left_join(.umap.dt, .tsne.dt) %>%
+    left_join(.leiden) %>%
+    left_join(.hash.info) %>%
+    na.omit()
+
+.lab <-
+    .cells[,
+           .(UMAP1=median(UMAP1),
+             UMAP2=median(UMAP2),
+             tSNE1=median(tSNE1),
+             tSNE2=median(tSNE2)),
+           by = .(component, membership)]
+
+.cols <- .more.colors(nrow(.lab), nc.pal=12)
 
 p1 <-
-    .gg.plot(.dt[order(PRDM1_short)], .aes) +
-    xlab("UMAP1") + ylab("UMAP2") + ggtitle("shrot") +
-    ggrastr::rasterise(geom_point(stroke=0, size=1), dpi = 300) +
-    theme(legend.key.width = unit(.2,"lines")) +
-    theme(legend.key.height = unit(.5,"lines")) +
-    scale_colour_distiller("PRDM1\nshort",
-                           palette="RdPu",
-                           direction=1)
-
-.aes <- aes(umap1, umap2, colour=pmin(PRDM1_long, 3))
+    .gg.plot(.cells, aes(UMAP1, UMAP2, color=as.factor(membership))) +
+    ggrastr::rasterise(geom_point(stroke=0, alpha=.8, size=.7), dpi=300) +
+    geom_text(aes(label=membership), data=.lab, size=4, color="black") +
+    scale_color_manual(values = .cols, guide="none")
 
 p2 <-
-    .gg.plot(.dt[order(PRDM1_long)], .aes) +
-    xlab("UMAP1") + ylab("UMAP2") + ggtitle("long") +
-    ggrastr::rasterise(geom_point(stroke=0, size=1), dpi = 300) +
-    theme(legend.key.width = unit(.2,"lines")) +
-    theme(legend.key.height = unit(.5,"lines")) +
-    scale_colour_distiller("PRDM1\nlong",
-                           palette="RdPu",
-                           direction=1)
+    .gg.plot(.cells, aes(tSNE1, tSNE2, color=as.factor(membership))) +
+    ggrastr::rasterise(geom_point(stroke=0, alpha=.8, size=.7), dpi=300) +
+    geom_text(aes(label=membership), data=.lab, size=4, color="black") +
+    scale_color_manual(values = .cols, guide="none")
 
 plt <- p1 | p2
 print(plt)
 ```
 
 ```{r results="asis", echo = F}
-.file <- fig.dir %&% "/Fig_mtreg_gene_umap_prdm1_iso.pdf"
-.gg.save(filename = .file, plot = plt, width=6, height=2.6)
+.file <- fig.dir %&% "/Fig_bbknn_mtreg.pdf"
+#.gg.save(filename = .file, plot = plt, width=6, height=3)
 ```
 
-### Can we find new marker genes/proteins for mTreg clusters?
+```{r Fig_bbknn_mtreg_sub, fig.width=6, fig.height=3}
+.cols <- .more.colors(10, nc.pal=7, .palette="Set1")
 
-```{r select_top_markers}
-## Actually, p-values are meaningless because we did clustering based
-## on expression and testing the significance of clustering results.
+p1 <-
+    .gg.plot(.cells, aes(UMAP1, UMAP2, color=as.factor(subject))) +
+    xlab("UMAP1") + ylab("UMAP2") +
+    ggrastr::rasterise(geom_point(stroke=0, alpha=.8, size=.7), dpi=300) +
+    scale_color_manual(values = .cols, guide="none")
+
+p2 <-
+    .gg.plot(.cells, aes(UMAP1, UMAP2, color=as.factor(subject))) +
+    xlab("UMAP1") + ylab("UMAP2") +
+    ggrastr::rasterise(geom_point(stroke=0, alpha=.8, size=.7), dpi=300) +
+    scale_color_manual(values = .cols, guide="none")
+
+plt <- p1 | p2
+print(plt)
+```
+
+```{r results="asis", echo = F}
+.file <- fig.dir %&% "/Fig_bbknn_mtreg_sub.pdf"
+#.gg.save(filename = .file, plot = plt, width=6, height=3)
+```
+
+### D. Summary heatmap
+
+**NOTE** The colors are standardized `log1p` expression across genes and cells.
+
+```{r select_mtreg_marker_genes}
+x.melt <- bbknn.x.melt(.data, .bbknn, .markers)
+.dt <- x.melt %>% left_join(.cells) %>% na.omit()
+.sum.subj <- .dt[, .(x = median(x)), by = .(gene, subject, membership)]
+.sum.subj[, x := scale(x), by = .(gene)]
+```
+
+```{r Fig_mtreg_sum_membership, fig.width=2.2, fig.height=6.5}
+.sum <-
+    .sum.subj[, .(x = median(x)), by = .(gene, membership)] %>%
+    mutate(col = `gene`, row = membership, weight = x) %>%
+    col.order(1:10, TRUE) %>%
+    as.data.table()
+
+plt <-
+    .gg.plot(.sum, aes(row, col, fill=pmin(pmax(weight, -1.5), 1.5)))+
+    geom_tile(linewidth=.1, color="black") +
+    scale_fill_distiller("", palette = "RdBu", direction = -1) +
+    theme(legend.key.width = unit(.2,"lines")) +
+    theme(legend.key.height = unit(.5,"lines")) +
+    xlab("cell clusters") + ylab("features")
+print(plt)
+```
+
+```{r results="asis", echo=F}
+.file <- fig.dir %&% "/Fig_mtreg_sum_membership.pdf"
+#.gg.save(filename = .file, plot = plt, width=2.2, height=6)
+```
+
+```{r include = F}
+.marker.order <- sort(unique(.sum$col))
+```
+
+```{r Fig_mtreg_sum_subj_member, fig.width=5.5, fig.height=6.5}
+.dt <- copy(.sum.subj) %>%
+    mutate(gene = factor(`gene`, .marker.order)) %>%
+    mutate(t = subject %&% "." %&% membership)
+
+plt <-
+    .gg.plot(.dt, aes(`t`, `gene`, fill=pmin(pmax(`x`, -1.5), 1.5))) +
+    facet_grid(. ~ membership, space="free", scales="free")+
+    geom_tile(linewidth=.1, color="black") +
+    scale_fill_distiller("", palette = "RdBu", direction = -1) +
+    theme(legend.key.width = unit(.2,"lines")) +
+    theme(legend.key.height = unit(.5,"lines")) +
+    theme(axis.ticks.x = element_blank()) +
+    theme(axis.text.x = element_blank()) +
+    xlab("subjects") + ylab("features")
+
+print(plt)
+```
+
+```{r results="asis", echo=F}
+.file <- fig.dir %&% "/Fig_mtreg_sum_subj_member.pdf"
+#.gg.save(filename = .file, plot = plt, width=5.5, height=6.5)
+```
+
+#### UMAP for each marker gene
+
+```{r Fig_mtreg_gene_umap, fig.width=3, fig.height=2.5, results="asis"}
+for(g in unique(x.melt$gene)) {
+    .dt <- left_join(x.melt[gene == g], .cells)
+    .aes <- aes(UMAP1, UMAP2, color=pmax(pmin(x, 3), -3))
+
+    plt <-
+        .gg.plot(.dt[order(`x`)], .aes) +
+        xlab("UMAP1") + ylab("UMAP2") +
+        ggrastr::rasterise(geom_point(stroke = 0, size=.7), dpi=300) +
+        theme(legend.key.width = unit(.2,"lines")) +
+        theme(legend.key.height = unit(.5,"lines")) +
+        scale_color_distiller(g, palette = "RdBu", direction = -1) +
+        ggtitle(g)
+
+    print(plt)
+    .file <- fig.dir %&% "/Fig_mtreg_gene_umap" %&% g %&% ".pdf"
+    #.gg.save(filename = .file, plot = plt, width=3, height=2.5)
+}
+```
+
+#### tSNE for each marker gene
+
+```{r Fig_mtreg_gene_tsne, fig.width=3, fig.height=2.5, results="asis"}
+for(g in unique(x.melt$gene)) {
+    .dt <- left_join(x.melt[gene == g], .cells)
+    .aes <- aes(tSNE1, tSNE2, color=pmax(pmin(x, 3), -3))
+
+    plt <-
+        .gg.plot(.dt[order(`x`)], .aes) +
+        xlab("TSNE1") + ylab("TSNE2") +
+        ggrastr::rasterise(geom_point(stroke = 0, size=.7), dpi=300) +
+        theme(legend.key.width = unit(.2,"lines")) +
+        theme(legend.key.height = unit(.5,"lines")) +
+        scale_color_distiller(g, palette = "RdBu", direction = -1) +
+        ggtitle(g)
+
+    print(plt)
+    .file <- fig.dir %&% "/Fig_mtreg_gene_tsne" %&% g %&% ".pdf"
+    #.gg.save(filename = .file, plot = plt, width=3, height=2.5)
+}
+```
+
+### E. Basic statistics
+
+```{r Fig_count_mtreg_tot, fig.width=6, fig.height=3}
 .stat <-
-    marker.stat[p.adjust(wilcox.p) < .01 &
-                p.adjust(ttest.p) < .01 &
-                ttest.t > 0]
+    .cells[,
+           .(N = .N),
+           by=.(batch, membership, component, disease)] %>%
+    mutate(membership = as.factor(membership)) %>% 
+    .sum.stat.batch()
 
-.top.markers <-
-    .stat[order(`ttest.t`, `sd`, decreasing = T),
-          head(.SD, 10),
-          by = .(membership)]
-
-top.stat <- .stat[gene %in% .top.markers$gene]
+plt <- .plt.sum.stat(.stat) + ggtitle("mtreg")
+print(plt)
 ```
+
+```{r echo = FALSE, results="asis"}
+.file <- fig.dir %&% "/Fig_count_mtreg_tot.pdf"
+#.gg.save(filename = .file, plot = plt, height=3, width=6)
+```
+
+```{r Fig_count_merged_mtreg_tot, fig.width=2, fig.height=3}
+.stat.tot <-
+    .cells[,
+           .(N = .N),
+           by=.(membership, disease)] %>%
+    mutate(membership = as.factor(membership)) %>% 
+    .sum.stat.tot() %>%
+    mutate(batch = "(N=" %&% num.int(sum(.stat$N)) %&% ")")
+
+plt <- .plt.sum.stat(.stat.tot) + ggtitle("mtreg")
+print(plt)
+```
+
+```{r echo = FALSE, results="asis"}
+.file <- fig.dir %&% "/Fig_count_merged_mtreg_tot.pdf"
+#.gg.save(filename = .file, plot = plt, width=2, height=3)
+```
+

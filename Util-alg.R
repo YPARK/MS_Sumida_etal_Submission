@@ -89,6 +89,13 @@ parse.tag <- function(x) {
     x;
 }
 
+take.batch.info <- function(.data){
+    fread(.data$col, header = F, col.names = "tag") %>%
+        parse.tag() %>%
+        select(batch) %>%
+        unlist()
+}
+
 parse.gene <- function(x){
     x[, c("ensembl_gene_id","hgnc_symbol") := tstrsplit(`gene`,split="_")]
     x[, i := 1:.N]
@@ -128,7 +135,7 @@ bbknn.x <- function(.data, .bbknn, .subset = NULL, .rescale = T) {
     return(ret)
 }
 
-bbknn.x.melt <- function(.data, .bbknn, .bbknn.umap, .subset = NULL) {
+bbknn.x.melt <- function(.data, .bbknn, .subset = NULL) {
 
     X <- bbknn.x(.data, .bbknn, .subset)
     ret <- reshape2::melt(X) %>% as.data.table()

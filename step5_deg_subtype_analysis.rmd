@@ -23,10 +23,17 @@ library(data.table)
 library(patchwork)
 library(mmutilR)
 source("Util-rmd.R")
+source("Util-alg.R")
 .mkdir(fig.dir)
 ```
 
-```{r}
+```{r read_hash}
+.hash.hdr <- "result/step1/hash"
+.hash.data <- fileset.list(.hash.hdr)
+.hash.info <- read.hash(.hash.data)
+```
+
+```{r include = F}
 sort.col <- function(.mat, .cts, .indvs){
 
     .fun <- function(ct) paste0(.indvs, "_", ct)
@@ -60,7 +67,7 @@ combine.statistics <- function(.result){
     return(out)
 }
 
-summarize.deg <- function(.dt, tot.cutoff = 3, disease.name = "MS", control.name = "HA") {
+summarize.deg <- function(.dt, tot.cutoff = 5, disease.name = "MS", control.name = "HA") {
 
     ## adjust potential bias
     .dt[`tot` >= tot.cutoff, b := mean(cfa), by = .(gene, membership)]
@@ -114,40 +121,11 @@ summarize.deg <- function(.dt, tot.cutoff = 3, disease.name = "MS", control.name
 }
 ```
 
-
-```{r read_hash}
-.hash.hdr <- "result/step1/hash"
-.hash.data <- fileset.list(.hash.hdr)
-.hash.mtx <- read.dense(.hash.data$mtx)
-.hash.argmax <- apply(.hash.mtx, 2, which.max)
-
-.hash.cells <- .hash.data$col %>%
-    fread(header=F, col.names="cell") %>%
-    (function(x) {
-        x[,c("barcode","batch"):=tstrsplit(`cell`,split="_")];
-        x[, barcode := gsub(`barcode`, pattern="-[0-9]$", replacement="")];
-        x[, hash := .hash.argmax]
-        x[, batch := as.integer(`batch`)]
-        return(x);
-    })
-
-.sample.info <-
-    readxl::read_xlsx("data/Hashing list MS Treg project.xlsx", 1) %>%
-    rename(Sample = `Cell type`) %>%
-    mutate(hash = gsub("#","",`hash`)) %>%
-    mutate(hash = as.integer(`hash`)) %>%
-    mutate(disease = substr(`subject`, 1, 2))
-
-.hash.info <-
-    left_join(.hash.cells, .sample.info)
-```
-
-
 # 1. mTconv subtype DEG analysis
 
 ```{r mtconv_read_annot}
 annot.dt <-
-    fread("Tab/step4_mtconv_cluster.txt.gz") %>%
+    fread("Tab/step4_mtconv_leiden.txt.gz") %>%
     left_join(.hash.info) %>%
     na.omit()
 ```
@@ -208,8 +186,7 @@ if.needed(.file, {
 .hc.ms.dt[, `Var1` := NULL]
 .hc.ms.dt[, `Var2` := NULL]
 
-hc.ms.deg <- summarize.deg(.hc.ms.dt)
-hc.ms.deg[, c("ensembl_gene_id", "hgnc_symbol") := tstrsplit(`gene`, split="_")]
+hc.ms.deg <- summarize.deg(.hc.ms.dt) %>% parse.gene()
 ```
 
 ```{r mtconv_ms_vs_hc_results, results="asis", echo = FALSE}
@@ -222,17 +199,17 @@ if.needed(.file, {
 cat("[**DOWNLOAD:** mTconv DEG MS vs HC]("%&% .file %&% ")\n\n")
 ```
 
-### Found `r num.int(nrow(unique(hc.ms.deg[fwer < .05, .(gene)])))` unique genes strongly perturbed by MS with FWER 5%
+### Found `r num.int(nrow(unique(hc.ms.deg[fdr < .05, .(gene)])))` unique genes strongly perturbed by MS with FDR 5%
 
-* Up-regulated: `r num.int(nrow(unique(hc.ms.deg[fwer < .05 & z > 0, .(gene)])))`
+* Up-regulated: `r num.int(nrow(unique(hc.ms.deg[fdr < .05 & z > 0, .(gene)])))`
 
-* Down-regulated:  `r num.int(nrow(unique(hc.ms.deg[fwer < .05 & z < 0, .(gene)])))`
+* Down-regulated:  `r num.int(nrow(unique(hc.ms.deg[fdr < .05 & z < 0, .(gene)])))`
 
 * Total pairs of genes and clusters: `r num.int(nrow(hc.ms.deg))`
 
 ```{r}
-count.deg <- function(.dt, fwer.cutoff = .05) {
-    .dt[fwer < fwer.cutoff &
+count.deg <- function(.dt, fdr.cutoff = .05) {
+    .dt[fdr < fdr.cutoff &
         sign(ADD) == sign(ADE) &
         sign(ADC) == sign(ADE),
         .(n = .N),
@@ -266,8 +243,8 @@ print(plt)
 
 #### Examples
 
-```{r}
-show.each.gene <- function(g, .data, .stat, .cutoff = 0) {
+```{r include = F}
+show.each.gene <- function(g, .data, .stat, .cutoff = 2) {
 
     .dt.g <- na.omit(.data[gene == g]) %>% filter(tot > .cutoff)
     .stat.dt <- na.omit(.stat[gene == g]) %>% rename(total = tot)
@@ -312,8 +289,8 @@ show.each.gene <- function(g, .data, .stat, .cutoff = 0) {
 
     .aes <- aes(x = x,
                 y = cfa,
-                ymin = cfa - 2 * cfa.sd,
-                ymax = cfa + 2 * cfa.sd,
+                ymin = cfa - cfa.sd,
+                ymax = cfa + cfa.sd,
                 fill = disease)
 
     .scale.y <- scale_y_continuous(labels = function(x) num.round(exp(x)))
@@ -348,8 +325,8 @@ show.each.gene <- function(g, .data, .stat, .cutoff = 0) {
 
     .aes <- aes(x = variable,
                 y = mu,
-                ymin = mu - 3 * se,
-                ymax = mu + 3 * se)
+                ymin = mu - 2 * se,
+                ymax = mu + 2 * se)
 
     p2 <-
         .gg.plot(.temp, .aes) +
@@ -391,7 +368,7 @@ bulk.mTconv.dt <- read.bulk(.file)
 hc.ms.deg[, c("ensembl_gene_id", "hgnc_symbol") := tstrsplit(`gene`, split="_")]
 
 .genes.show <-
-    hc.ms.deg[fwer < 0.05 &
+    hc.ms.deg[fdr < 0.05 &
               hgnc_symbol %in% .bulk.genes &
               sign(ADD) == sign(ADE) &
               sign(ADC) == sign(ADE)] %>%
@@ -417,7 +394,7 @@ cat("\n\n\n")
 
 ```{r mtreg_read_annot}
 annot.dt <-
-    fread("Tab/step4_mtreg_cluster.txt.gz") %>%
+    fread("Tab/step4_mtreg_leiden.txt.gz") %>%
     left_join(.hash.info) %>%
     na.omit()
 ```
@@ -492,15 +469,15 @@ if.needed(.file, {
 cat("[**DOWNLOAD:** mtreg DEG MS vs HC]("%&% .file %&% ")\n\n")
 ```
 
-### Found `r num.int(nrow(unique(hc.ms.deg[fwer < .05, .(gene)])))` unique genes strongly perturbed by MS with FWER 5%
+### Found `r num.int(nrow(unique(hc.ms.deg[fdr < .05, .(gene)])))` unique genes strongly perturbed by MS with FDR 5%
 
-* Up-regulated: `r num.int(nrow(unique(hc.ms.deg[fwer < .05 & z > 0, .(gene)])))`
+* Up-regulated: `r num.int(nrow(unique(hc.ms.deg[fdr < .05 & z > 0, .(gene)])))`
 
-* Down-regulated:  `r num.int(nrow(unique(hc.ms.deg[fwer < .05 & z < 0, .(gene)])))`
+* Down-regulated:  `r num.int(nrow(unique(hc.ms.deg[fdr < .05 & z < 0, .(gene)])))`
 
 * Total pairs of genes and clusters: `r num.int(nrow(hc.ms.deg))`
 
-```{r Fig_mTreg_DEG_count, fig.width=3, fig.height=2, echo = FALSE, results="asis"}
+```{r Fig_mTreg_DEG_count, fig.width=2, fig.height=2, echo = FALSE, results="asis"}
 .df <- count.deg(hc.ms.deg)
 
 plt <-
@@ -514,9 +491,8 @@ plt <-
 
 print(plt)
 .file <- fig.dir %&% "/Fig_mtreg_DEG_count.pdf"
-## .gg.save(filename = .file, plot = plt, width=3, height=2)
+.gg.save(filename = .file, plot = plt, width=2, height=2)
 ```
-
 
 ```{r}
 .bulk.genes <-
@@ -527,7 +503,7 @@ print(plt)
 hc.ms.deg[, c("ensembl_gene_id", "hgnc_symbol") := tstrsplit(`gene`, split="_")]
 
 .genes.show <-
-    hc.ms.deg[fwer < 0.05 &
+    hc.ms.deg[fdr < 0.05 &
               hgnc_symbol %in% .bulk.genes &
               sign(ADD) == sign(ADE) &
               sign(ADC) == sign(ADE)] %>%
@@ -542,7 +518,7 @@ for(g in .genes.show){
     .file <- fig.dir %&% "/Fig_mTreg_DEG_example_" %&% g %&% ".pdf"
     if.needed(.file, {
         plt <- show.each.gene(g, .hc.ms.dt, hc.ms.deg)
-        .gg.save(filename=.file, cat.link=FALSE, plot=plt, width=5.5, height=3)
+        .gg.save(filename=.file, cat.link=FALSE, plot=plt, width=5, height=3)
     })
     cat("[" %&% g %&% "](" %&% .file %&% ") ")
 }

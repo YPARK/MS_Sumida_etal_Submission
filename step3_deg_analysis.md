@@ -7,7 +7,7 @@ output:
   html_document:
     toc: true
     keep_md: true
-    self_contained: false
+    self_contained: true
 ---
 
 
@@ -206,106 +206,6 @@ count.deg <- function(.dt, fwer.cutoff = .01) {
 ## 3. Show genes with FWER $< 10^{-2}$ overlapping with the bulk DEGs
 
 
-```r
-show.each.gene <- function(g, .data, .stat, .cutoff = 0) {
-
-    .dt.g <- na.omit(.data[gene == g]) %>% filter(tot > .cutoff)
-    .stat.dt <- na.omit(.stat[gene == g]) %>% rename(total = tot)
-
-    .dir <- .stat.dt[which.max(abs(.stat.dt$ADE)), .(ADE)] %>%
-        unlist
-
-    if(.dir > 0) {
-
-        .dt <- .dt.g %>%
-            left_join(.stat.dt, by = c("celltype", "gene")) %>%
-            group_by(disease, celltype) %>%
-            arrange(cfa) %>%
-            mutate(j = 1:n()) %>%
-            ungroup() %>%
-            mutate(x = disease %&% "_" %&% j)
-
-    } else {
-
-        .dt <- .dt.g %>%
-            left_join(.stat.dt, by = c("celltype", "gene")) %>%
-            group_by(disease, celltype) %>%
-            arrange(desc(cfa)) %>%
-            mutate(j = 1:n()) %>%
-            ungroup() %>%
-            mutate(x = disease %&% "_" %&% j)
-
-    }
-
-    .dt <- .dt %>%
-        mutate(.pv = if_else(is.na(pv), "1", num.sci(pv))) %>%
-        mutate(.facet = celltype %&% "\n(" %&% .pv %&% ")") %>%
-        mutate(ADD.z = ADD/ADD.se, ADC.z = ADC/ADC.se) %>%
-        as.data.table
-
-    .stat.dt <- .dt[, .(celltype,
-                        ADE, ADE.se,
-                        ADD, ADD.se,
-                        ADC, ADC.se,
-                        pv, .facet)] %>%
-        unique
-
-    .aes <- aes(x = x,
-                y = cfa,
-                ymin = cfa - 2 * cfa.sd,
-                ymax = cfa + 2 * cfa.sd,
-                fill = disease)
-
-    .scale.y <- scale_y_continuous(labels = function(x) num.round(exp(x)))
-
-    p1 <-
-        .gg.plot(.dt, .aes) +
-        theme(legend.position = "top") +
-        facet_wrap(~.facet, nrow = 1, scales="free") +
-        .scale.y +
-        theme(axis.ticks.x = element_blank()) +
-        theme(axis.text.x = element_blank()) +
-        theme(axis.title.x = element_blank()) +
-        geom_hline(yintercept = 0, linewidth = 1, colour = "gray") +
-        geom_hline(data = .stat.dt, aes(yintercept = ADE), linewidth = 1, colour = "#F8766D") +
-        geom_linerange(linewidth = .2) +
-        geom_point(aes(size = tot), pch = 21, stroke = .2) +
-        scale_size_continuous("total(k)", range=c(0.1, 2.5), labels = function(x) num.int(x/1e3)) +
-        scale_fill_manual(values = c("gray90","#F8766D")) +
-        xlab("") + ylab("fold change") + ggtitle(g)
-
-    .temp.1 <- .stat.dt %>%
-        dplyr::select(celltype, pv, ADE, ADD, ADC) %>%
-        mutate(ADC = - ADC) %>%                  # flip the effect
-        melt(id.vars=c("celltype", "pv"), value.name = "mu")
-
-    .temp.2 <- .stat.dt %>%
-        dplyr::select(celltype, ADE.se, ADD.se, ADC.se) %>%
-        melt(id.vars="celltype", value.name = "se") %>%
-        mutate(variable = str_remove(variable, ".se"))
-
-    .temp <- left_join(.temp.1, .temp.2, by = c("celltype", "variable"))
-
-    .aes <- aes(x = variable,
-                y = mu,
-                ymin = mu - 3 * se,
-                ymax = mu + 3 * se)
-
-    p2 <-
-        .gg.plot(.temp, .aes) +
-        theme(axis.text.x = element_text(angle=90, hjust = 1, vjust= .5)) +
-        facet_wrap(~celltype, nrow = 1, scales="free") +
-        .scale.y + ylab("fold change") + xlab("") +
-        geom_hline(yintercept = 0, lty = 2, linewidth = .5, colour = "black") +
-        geom_linerange(linewidth = .2) +
-        geom_point(aes(fill = variable, stroke = .2, size = -log10(pv)), pch = 21) +
-        scale_fill_brewer(palette = "Greens", guide="none") +
-        scale_size_continuous("p-value", range=c(.5, 2.5), breaks=seq(0, 10, 2), labels = function(x) 10^(-x))
-
-    plt <- (p1 / p2) + patchwork::plot_layout(heights = c(4,2))
-    return(plt)
-}
-```
 
 
 ```r

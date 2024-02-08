@@ -7,7 +7,7 @@ output:
   html_document:
     toc: true
     keep_md: true
-    self_contained: false
+    self_contained: true
 ---
 
 ```{r GlobOpt, include=FALSE}
@@ -405,8 +405,8 @@ print(plt)
 
 ## 3. Show genes with FWER $< 10^{-2}$ overlapping with the bulk DEGs
 
-```{r}
-show.each.gene <- function(g, .data, .stat, .cutoff = 0) {
+```{r include = F}
+show.each.gene <- function(g, .data, .stat, .cutoff = 2) {
 
     .dt.g <- na.omit(.data[gene == g]) %>% filter(tot > .cutoff)
     .stat.dt <- na.omit(.stat[gene == g]) %>% rename(total = tot)
@@ -451,8 +451,8 @@ show.each.gene <- function(g, .data, .stat, .cutoff = 0) {
 
     .aes <- aes(x = x,
                 y = cfa,
-                ymin = cfa - 2 * cfa.sd,
-                ymax = cfa + 2 * cfa.sd,
+                ymin = cfa - cfa.sd,
+                ymax = cfa + cfa.sd,
                 fill = disease)
 
     .scale.y <- scale_y_continuous(labels = function(x) num.round(exp(x)))
@@ -487,8 +487,8 @@ show.each.gene <- function(g, .data, .stat, .cutoff = 0) {
 
     .aes <- aes(x = variable,
                 y = mu,
-                ymin = mu - 3 * se,
-                ymax = mu + 3 * se)
+                ymin = mu - 2 * se,
+                ymax = mu + 2 * se)
 
     p2 <-
         .gg.plot(.temp, .aes) +

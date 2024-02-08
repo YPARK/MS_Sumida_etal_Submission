@@ -27,18 +27,8 @@ We will use full data matrix processed in the previous step.
 
 
 ```r
-.features <- readLines(.data$row)
-.hash <- .features[str_detect(.features, "Hash")]
 .hash.hdr <- "result/step1/hash"
 .hash.data <- fileset.list(.hash.hdr)
-if.needed(.hash.data, {
-    .hash.data <-
-        rcpp_mmutil_copy_selected_rows(.data$mtx,
-                                       .data$row,
-                                       .data$col,
-                                       .hash,
-                                       .hash.hdr)
-})
 .hash.info <- read.hash(.hash.data)
 ```
 
@@ -1021,4 +1011,3 @@ print(plt)
 * [**DOWNLOAD:** UMAP + annotation](Tab/step2_umap.txt.gz)
 
 * [**DOWNLOAD:** tSNE + annotation](Tab/step2_tsne.txt.gz)
-
