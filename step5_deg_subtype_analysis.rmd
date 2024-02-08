@@ -67,7 +67,7 @@ combine.statistics <- function(.result){
     return(out)
 }
 
-summarize.deg <- function(.dt, tot.cutoff = 5, disease.name = "MS", control.name = "HA") {
+summarize.deg <- function(.dt, tot.cutoff = 3, disease.name = "MS", control.name = "HA") {
 
     ## adjust potential bias
     .dt[`tot` >= tot.cutoff, b := mean(cfa), by = .(gene, membership)]
@@ -163,8 +163,8 @@ if.needed(.file, {
 
     .deg.stat <-
         make.cocoa(.deg.data, .membership, .cell2indv, .indv2exp,
-                   .rank = 15, .em.iter = 20, .em.tol = 1e-8, .take.ln = TRUE,
-                   knn = 50, impute.by.knn = TRUE, num.threads = 8)
+                   .rank = 10, .em.iter = 20, .em.tol = 1e-8, .take.ln = TRUE,
+                   knn = 30, impute.by.knn = TRUE, num.threads = 8)
 
    saveRDS(.deg.stat, .file)
 })
@@ -228,7 +228,7 @@ count.deg <- function(.dt, fdr.cutoff = .05) {
 .df <- count.deg(hc.ms.deg)
 
 plt <-
-    .gg.plot(.df, aes(x=membership, y=n, group=direction, fill=direction)) +
+    .gg.plot(.df, aes(x=factor(membership, 1:50), y=n, group=direction, fill=direction)) +
     theme(legend.position = c(1,1)) +
     theme(legend.justification = c(1,1)) +
     xlab("cluster") + ylab("# DEG") +
@@ -238,13 +238,13 @@ plt <-
 
 print(plt)
 .file <- fig.dir %&% "/Fig_mTconv_DEG_count.pdf"
-.gg.save(filename = .file, plot = plt, width=2, height=2)
+#.gg.save(filename = .file, plot = plt, width=2, height=2)
 ```
 
 #### Examples
 
 ```{r include = F}
-show.each.gene <- function(g, .data, .stat, .cutoff = 2) {
+show.each.gene <- function(g, .data, .stat, .cutoff = 3) {
 
     .dt.g <- na.omit(.data[gene == g]) %>% filter(tot > .cutoff)
     .stat.dt <- na.omit(.stat[gene == g]) %>% rename(total = tot)
@@ -276,6 +276,7 @@ show.each.gene <- function(g, .data, .stat, .cutoff = 2) {
 
     .dt <- .dt %>%
         mutate(.pv = if_else(is.na(pv), "1", num.sci(pv))) %>%
+        mutate(membership = str_pad(as.integer(membership),2,pad=0)) %>% 
         mutate(.facet = membership %&% "\n(" %&% .pv %&% ")") %>%
         mutate(ADD.z = ADD/ADD.se, ADC.z = ADC/ADC.se) %>%
         as.data.table
@@ -432,8 +433,8 @@ if.needed(.file, {
 
     .deg.stat <-
         make.cocoa(.deg.data, .membership, .cell2indv, .indv2exp,
-                   .rank = 15, .em.iter = 20, .em.tol = 1e-8, .take.ln = TRUE,
-                   knn = 50, impute.by.knn = TRUE, num.threads = 8)
+                   .rank = 10, .em.iter = 20, .em.tol = 1e-8, .take.ln = TRUE,
+                   knn = 30, impute.by.knn = TRUE, num.threads = 8)
 
    saveRDS(.deg.stat, .file)
 })
@@ -477,11 +478,11 @@ cat("[**DOWNLOAD:** mtreg DEG MS vs HC]("%&% .file %&% ")\n\n")
 
 * Total pairs of genes and clusters: `r num.int(nrow(hc.ms.deg))`
 
-```{r Fig_mTreg_DEG_count, fig.width=2, fig.height=2, echo = FALSE, results="asis"}
+```{r Fig_mTreg_DEG_count, fig.width=3, fig.height=2, echo = FALSE, results="asis"}
 .df <- count.deg(hc.ms.deg)
 
 plt <-
-    .gg.plot(.df, aes(x=membership, y=n, group=direction, fill=direction)) +
+    .gg.plot(.df, aes(x=factor(membership, 1:50), y=n, group=direction, fill=direction)) +
     theme(legend.position = c(1,1)) +
     theme(legend.justification = c(1,1)) +
     xlab("cluster") + ylab("# DEG") +
@@ -491,7 +492,7 @@ plt <-
 
 print(plt)
 .file <- fig.dir %&% "/Fig_mtreg_DEG_count.pdf"
-.gg.save(filename = .file, plot = plt, width=2, height=2)
+#.gg.save(filename = .file, plot = plt, width=2, height=2)
 ```
 
 ```{r}
@@ -518,7 +519,7 @@ for(g in .genes.show){
     .file <- fig.dir %&% "/Fig_mTreg_DEG_example_" %&% g %&% ".pdf"
     if.needed(.file, {
         plt <- show.each.gene(g, .hc.ms.dt, hc.ms.deg)
-        .gg.save(filename=.file, cat.link=FALSE, plot=plt, width=5, height=3)
+        .gg.save(filename=.file, cat.link=FALSE, plot=plt, width=7, height=3)
     })
     cat("[" %&% g %&% "](" %&% .file %&% ") ")
 }

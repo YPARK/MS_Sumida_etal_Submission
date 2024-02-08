@@ -101,6 +101,83 @@ annot.dt <- fread("Tab/step2_celltype.txt.gz")
 }
 ```
 
+```{r include = F}
+.plot.vd.fun <- function(k, VD){
+    .idx <- which(colnames(VD) %in% ("V" %&% (k:(k+1))))
+    .dt <-
+        VD[, ...idx] %>%
+        cbind(VD[, .(batch)])
+    colnames(.dt) <- c("x","y","batch")
+    .gg.plot(.dt[sample(.N)], aes(x, y, color=batch)) +
+        xlab("PC" %&% k) + ylab("PC" %&% (k+1)) +
+        ggrastr::rasterise(geom_point(stroke=0, size=.7), dpi=300) +
+        scale_color_brewer(palette = "Set3") +
+        theme(legend.position = c(1,1)) +
+        theme(legend.justification = c(1,1))
+}
+.pca.df <- function(.mat){
+    colnames(.mat) <- "V" %&% 1:ncol(.mat)
+    as.data.frame(.mat) %>%
+        rownames_to_column("tag") %>%
+        as.data.table() %>%
+        parse.tag() %>%
+        mutate(batch = as.factor(batch))
+}
+diagnostic.density.kmeans <- function(.data, .kmeans){
+    .scores <- rcpp_mmutil_compute_scores(.data$mtx, .data$row, .data$col)
+    col.scores <- setDT(.scores$col)
+
+    .dt <-
+        data.table(`name` = readLines(.data$col),
+                   k = as.factor(.kmeans$cluster)) %>%
+        left_join(col.scores)
+
+    p1 <-
+        .gg.plot(.dt, aes(log1p(nnz), color=k)) +
+        theme(legend.position = c(1,1)) +
+        theme(legend.justification = c(1,1)) +
+        geom_density()
+
+    p2 <-
+        .gg.plot(.dt, aes(log1p(`mean`), color=k)) +
+        theme(legend.position = c(1,1)) +
+        theme(legend.justification = c(1,1)) +
+        geom_density()
+
+    p3 <-
+        .gg.plot(.dt, aes(log1p(`cv`), color=k)) +
+        theme(legend.position = c(1,1)) +
+        theme(legend.justification = c(1,1)) +
+        geom_density()
+
+    plt <- wrap_plots(p1, p2, p3, nrow = 1)
+}
+```
+
+
+```{r include = F}
+qc.leiden <- function(.leiden.raw, .cutoff = .75){
+
+    .dt <- .leiden.raw %>% as.data.table() %>% parse.tag()
+
+    .remove <-
+        .dt %>%
+        group_by(membership, component, batch) %>%
+        count() %>% 
+        ungroup() %>% 
+        group_by(membership, component) %>%
+        mutate(n.tot = sum(`n`)) %>% 
+        ungroup() %>%
+        filter(`n`/`n.tot` > .75) %>%
+        select(membership, component)
+
+    ret <-
+        anti_join(.leiden.raw, .remove) %>%
+        as.data.table()
+    return(ret)
+}
+```
+
 ## 1. Memory T conventional
 
 ```{r take_subset_mtconv}
@@ -119,38 +196,81 @@ if.needed(.data, {
 })
 ```
 
-### A. Clustering cells by batch-balancing k-nearest neighbour graph
+### Perform outlier Q/C to detect and remove batch-specific cells
 
-```{r run_bbknn_mtconv}
-.file <- "result/step4/mtconv_bbknn.rds"
-
+```{r do_svd_mtconv}
+.file <- "result/step4/mtconv_svd.rds"
 if.needed(.file, {
+    .svd <- rcpp_mmutil_svd(.data$mtx, RANK=30, TAKE_LN=T, NUM_THREADS = 16, EM_ITER = 20)
+    saveRDS(.svd, .file)
+})
+.svd <- readRDS(.file)
+```
+
+#### Can we identify troublesome batch-specific principal components?
+
+##### Show PCs computed on surface protein data
+
+```{r Fig_mtconv_PC, fig.width=9, fig.height=9}
+V <- sweep(.svd$V, 2, .svd$D, `*`)
+rownames(V) <- readLines(.data$col)
+plots <- lapply(1:9, .plot.vd.fun, VD = .pca.df(V))
+plt <- wrap_plots(plots, ncol = 3)
+print(plt)
+```
+
+* We can adjust systemic batch-specific effects by batch-balancing k-nearest neighbour method. This shouldn't be much trouble.
+
+```{r run_mtconv_bbknn_svd}
+.file <- "result/step4/mtconv_bbknn.rds"
+if.needed(.file, {
+
     .batches <- take.batch.info(.data)
 
     .bbknn <-
-        rcpp_mmutil_bbknn_mtx(.data$mtx,
-                              r_batches = .batches, # batch label
-                              RANK = 30,            # PCs
-                              knn = 50,             # 20 nn per batch
-                              RECIPROCAL_MATCH = T, # crucial
-                              EM_ITER = 20,         # EM steps
-                              NUM_THREADS = 16,
-                              TAKE_LN = T,
-                              USE_SINGULAR_VALUES = F)
+        rcpp_mmutil_bbknn(r_svd_u = .svd$U,
+                          r_svd_v = .svd$V,
+                          r_svd_d = .svd$D,
+                          r_batches = .batches, # batch label
+                          knn = 50,             # 20 nn per batch
+                          RECIPROCAL_MATCH = T, # crucial
+                          NUM_THREADS = 16,
+                          USE_SINGULAR_VALUES = T)
 
     saveRDS(.bbknn, .file)
 })
 .bbknn <- readRDS(.file)
 ```
 
+```{r Fig_mtconv_PC_adj, fig.width=9, fig.height=9}
+VD <- .bbknn$factors.adjusted
+rownames(VD) <- readLines(.data$col)
+plots <- lapply(1:9, .plot.vd.fun, VD = .pca.df(VD))
+plt <- wrap_plots(plots, ncol = 3)
+print(plt)
+```
+
+### A. Clustering cells by batch-balancing k-nearest neighbour graph
+
 ```{r bbknn_leiden_mtconv}
-.file <- "Tab/step4_mtconv_leiden.txt.gz"
+.file <- "Tab/step4_mtconv_leiden_raw.txt.gz"
 if.needed(.file, {
     .tags <- readLines(.data$col)
-    .leiden <- run.leiden(.bbknn$knn.adj, .tags, res=.3, nrepeat = 100, min.size = 10)
+    .leiden <- run.leiden(.bbknn$knn.adj, .tags, res=.7, nrepeat = 100, min.size = 100)
     fwrite(.leiden, .file)
 })
-.leiden <- fread(.file)
+.leiden.raw <- fread(.file)
+```
+
+#### Filter out small cluster cells if we have enriched specific batches
+
+```{r leiden_qc_mtconv}
+.file <- "Tab/step4_mtconv_leiden.txt.gz"
+if.needed(.file, {
+    .leiden <- qc.leiden(.leiden.raw, .cutoff = .75)
+    fwrite(.leiden, .file)
+})
+.leiden <- fread(.file)    
 ```
 
 ```{r echo = F, results = "asis"}
@@ -168,7 +288,7 @@ if.needed(.file, {
                          n_epochs=3000,
                          n_sgd_threads=16,
                          verbose=T,
-                         init="lvrandom",
+                         init="spectral",
                          scale=T)
 
     .tags <- readLines(.data$col)
@@ -193,10 +313,12 @@ cat("[**DOWNLOAD:** mTconv UMAP results]("%&% .file %&% ")\n\n")
 ```{r calculate_tSNE_coordinates_mtconv}
 .file <- "Tab/step4_tsne_mtconv.txt.gz"
 if.needed(.file, {
+
     .tsne <- Rtsne::Rtsne(.bbknn$factors.adjusted,
                           check_duplicates = FALSE,
                           verbose = T,
-                          num_threads = 16)
+                          num_threads = 16,
+                          perplexity = 100)
 
     .tags <- readLines(.data$col)
 
@@ -233,8 +355,6 @@ marker.stat <- fread(.file, sep = "\t")
 ```{r echo = F, results = "asis"}
 cat("[**DOWNLOAD:** mTconv marker gene statistics]("%&% .file %&% ")\n\n")
 ```
-
-
 
 ### C. Non-linear embedding to confirm the cell clusters of mTconv cells
 
@@ -275,6 +395,8 @@ print(plt)
 .file <- fig.dir %&% "/Fig_bbknn_mtconv.pdf"
 .gg.save(filename = .file, plot = plt, width=6, height=3)
 ```
+
+##### Confirm batch/individual-specific effects
 
 ```{r Fig_bbknn_mtconv_sub, fig.width=6, fig.height=3}
 .cols <- .more.colors(10, nc.pal=7, .palette="Set1")
@@ -363,7 +485,7 @@ print(plt)
 .gg.save(filename = .file, plot = plt, width=5, height=6.5)
 ```
 
-#### UMAP for each marker gene
+#### UMAP for each marker gene (normalized expression)
 
 ```{r Fig_mtconv_gene_umap, fig.width=3, fig.height=2.5, results="asis"}
 for(g in unique(x.melt$gene)) {
@@ -379,13 +501,13 @@ for(g in unique(x.melt$gene)) {
         scale_color_distiller(g, palette = "RdBu", direction = -1) +
         ggtitle(g)
 
-    print(plt)
-    .file <- fig.dir %&% "/Fig_mtconv_gene_umap" %&% g %&% ".pdf"
-    .gg.save(filename = .file, plot = plt, width=3, height=2.5)
+    .file <- fig.dir %&% "/Fig_mtconv_gene_umap_" %&% g %&% ".pdf"
+    .gg.save(filename = .file, plot = plt, width=3, height=2.5, cat.link = F)
+    cat("[" %&% g %&% "](" %&% .file %&% ") ")
 }
 ```
 
-#### tSNE for each marker gene
+#### tSNE for each marker gene (normalized expression)
 
 ```{r Fig_mtconv_gene_tsne, fig.width=3, fig.height=2.5, results="asis"}
 for(g in unique(x.melt$gene)) {
@@ -401,9 +523,9 @@ for(g in unique(x.melt$gene)) {
         scale_color_distiller(g, palette = "RdBu", direction = -1) +
         ggtitle(g)
 
-    print(plt)
-    .file <- fig.dir %&% "/Fig_mtconv_gene_tsne" %&% g %&% ".pdf"
-    .gg.save(filename = .file, plot = plt, width=3, height=2.5)
+    .file <- fig.dir %&% "/Fig_mtconv_gene_tsne_" %&% g %&% ".pdf"
+    .gg.save(filename = .file, plot = plt, width=3, height=2.5, cat.link = F)
+    cat("[" %&% g %&% "](" %&% .file %&% ") ")
 }
 ```
 
@@ -463,38 +585,82 @@ if.needed(.data, {
 })
 ```
 
-### A. Clustering cells by batch-balancing k-nearest neighbour graph
+### Perform outlier Q/C to detect and remove batch-specific cells
 
-```{r run_bbknn_mtreg}
-.file <- "result/step4/mtreg_bbknn.rds"
-
+```{r do_svd_mtreg}
+.file <- "result/step4/mtreg_svd.rds"
 if.needed(.file, {
+    .svd <- rcpp_mmutil_svd(.data$mtx, RANK=30, TAKE_LN=T, NUM_THREADS = 16, EM_ITER = 20)
+    saveRDS(.svd, .file)
+})
+.svd <- readRDS(.file)
+```
+
+#### Can we identify troublesome batch-specific principal components?
+
+##### Show PCs computed on surface protein data
+
+```{r Fig_mtreg_PC, fig.width=9, fig.height=9}
+V <- sweep(.svd$V, 2, .svd$D, `*`)
+rownames(V) <- readLines(.data$col)
+plots <- lapply(1:9, .plot.vd.fun, VD = .pca.df(V))
+plt <- wrap_plots(plots, ncol = 3)
+print(plt)
+```
+
+* We can adjust systemic batch-specific effects by batch-balancing k-nearest neighbour method. This shouldn't be much trouble.
+
+```{r run_mtreg_bbknn_svd}
+.file <- "result/step4/mtreg_bbknn.rds"
+if.needed(.file, {
+
     .batches <- take.batch.info(.data)
 
     .bbknn <-
-        rcpp_mmutil_bbknn_mtx(.data$mtx,
-                              r_batches = .batches, # batch label
-                              RANK = 30,            # PCs
-                              knn = 50,             # 20 nn per batch
-                              RECIPROCAL_MATCH = T, # crucial
-                              EM_ITER = 20,         # EM steps
-                              NUM_THREADS = 16,
-                              TAKE_LN = T,
-                              USE_SINGULAR_VALUES = F)
+        rcpp_mmutil_bbknn(r_svd_u = .svd$U,
+                          r_svd_v = .svd$V,
+                          r_svd_d = .svd$D,
+                          r_batches = .batches, # batch label
+                          knn = 50,             # 20 nn per batch
+                          RECIPROCAL_MATCH = T, # crucial
+                          NUM_THREADS = 16,
+                          USE_SINGULAR_VALUES = T)
 
     saveRDS(.bbknn, .file)
 })
 .bbknn <- readRDS(.file)
 ```
 
+```{r Fig_mtreg_PC_adj, fig.width=9, fig.height=9}
+VD <- .bbknn$factors.adjusted
+rownames(VD) <- readLines(.data$col)
+plots <- lapply(1:9, .plot.vd.fun, VD = .pca.df(VD))
+plt <- wrap_plots(plots, ncol = 3)
+print(plt)
+```
+
+### A. Clustering cells by batch-balancing k-nearest neighbour graph
+
+
 ```{r bbknn_leiden_mtreg}
-.file <- "Tab/step4_mtreg_leiden.txt.gz"
+.file <- "Tab/step4_mtreg_leiden_raw.txt.gz"
 if.needed(.file, {
     .tags <- readLines(.data$col)
-    .leiden <- run.leiden(.bbknn$knn.adj, .tags, res=.3, nrepeat = 100, min.size = 10)
+    .leiden <- run.leiden(.bbknn$knn.adj, .tags, res=.7, nrepeat = 100, min.size = 100)
     fwrite(.leiden, .file)
 })
-.leiden <- fread(.file)
+.leiden.raw <- fread(.file)
+```
+
+#### Filter out small cluster cells if we have enriched specific batches
+
+```{r leiden_qc_mtreg}
+.file <- "Tab/step4_mtreg_leiden.txt.gz"
+if.needed(.file, {
+    .leiden <- qc.leiden(.leiden.raw, .cutoff = .75)
+    fwrite(.leiden, .file)
+})
+.leiden <- fread(.file)    
 ```
 
 ```{r echo = F, results = "asis"}
@@ -512,7 +678,7 @@ if.needed(.file, {
                          n_epochs=3000,
                          n_sgd_threads=16,
                          verbose=T,
-                         init="lvrandom",
+                         init="spectral",
                          scale=T)
 
     .tags <- readLines(.data$col)
@@ -619,6 +785,8 @@ print(plt)
 .gg.save(filename = .file, plot = plt, width=6, height=3)
 ```
 
+##### Confirm batch/individual-specific effects
+
 ```{r Fig_bbknn_mtreg_sub, fig.width=6, fig.height=3}
 .cols <- .more.colors(10, nc.pal=7, .palette="Set1")
 
@@ -654,11 +822,11 @@ x.melt <- bbknn.x.melt(.data, .bbknn, .markers)
 .sum.subj[, x := scale(x), by = .(gene)]
 ```
 
-```{r Fig_mtreg_sum_membership, fig.width=2.2, fig.height=6.5}
+```{r Fig_mtreg_sum_membership, fig.width=3, fig.height=6.5}
 .sum <-
     .sum.subj[, .(x = median(x)), by = .(gene, membership)] %>%
     mutate(col = `gene`, row = membership, weight = x) %>%
-    col.order(1:10, TRUE) %>%
+    col.order(1:15, TRUE) %>%
     as.data.table()
 
 plt <-
@@ -673,14 +841,14 @@ print(plt)
 
 ```{r results="asis", echo=F}
 .file <- fig.dir %&% "/Fig_mtreg_sum_membership.pdf"
-.gg.save(filename = .file, plot = plt, width=2.2, height=6)
+.gg.save(filename = .file, plot = plt, width=3, height=6)
 ```
 
 ```{r include = F}
 .marker.order <- sort(unique(.sum$col))
 ```
 
-```{r Fig_mtreg_sum_subj_member, fig.width=5.5, fig.height=6.5}
+```{r Fig_mtreg_sum_subj_member, fig.width=6, fig.height=6.5}
 .dt <- copy(.sum.subj) %>%
     mutate(gene = factor(`gene`, .marker.order)) %>%
     mutate(t = subject %&% "." %&% membership)
@@ -701,7 +869,7 @@ print(plt)
 
 ```{r results="asis", echo=F}
 .file <- fig.dir %&% "/Fig_mtreg_sum_subj_member.pdf"
-.gg.save(filename = .file, plot = plt, width=5.5, height=6.5)
+.gg.save(filename = .file, plot = plt, width=6, height=6.5)
 ```
 
 #### UMAP for each marker gene
@@ -720,9 +888,9 @@ for(g in unique(x.melt$gene)) {
         scale_color_distiller(g, palette = "RdBu", direction = -1) +
         ggtitle(g)
 
-    print(plt)
-    .file <- fig.dir %&% "/Fig_mtreg_gene_umap" %&% g %&% ".pdf"
-    .gg.save(filename = .file, plot = plt, width=3, height=2.5)
+    .file <- fig.dir %&% "/Fig_mtreg_gene_umap_" %&% g %&% ".pdf"
+    .gg.save(filename = .file, plot = plt, width=3, height=2.5, cat.link = F)
+    cat("[" %&% g %&% "](" %&% .file %&% ") ")
 }
 ```
 
@@ -742,9 +910,9 @@ for(g in unique(x.melt$gene)) {
         scale_color_distiller(g, palette = "RdBu", direction = -1) +
         ggtitle(g)
 
-    print(plt)
-    .file <- fig.dir %&% "/Fig_mtreg_gene_tsne" %&% g %&% ".pdf"
-    .gg.save(filename = .file, plot = plt, width=3, height=2.5)
+    .file <- fig.dir %&% "/Fig_mtreg_gene_tsne_" %&% g %&% ".pdf"
+    .gg.save(filename = .file, plot = plt, width=3, height=2.5, cat.link = F)
+    cat("[" %&% g %&% "](" %&% .file %&% ") ")
 }
 ```
 

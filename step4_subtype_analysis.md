@@ -2,7 +2,7 @@
 title: "Step 4: subtype analysis"
 author: Yongjin Park
 theme: jekyll-theme-minimal
-date: "2024-02-07"
+date: "2024-02-08"
 bibliography: "MS_Ref.bib"
 output:
   html_document:
@@ -56,6 +56,11 @@ annot.dt <- fread("Tab/step2_celltype.txt.gz")
 
 
 
+
+
+
+
+
 ## 1. Memory T conventional
 
 
@@ -75,25 +80,51 @@ if.needed(.data, {
 })
 ```
 
-### A. Clustering cells by batch-balancing k-nearest neighbour graph
+### Perform outlier Q/C to detect and remove batch-specific cells
+
+
+```r
+.file <- "result/step4/mtconv_svd.rds"
+if.needed(.file, {
+    .svd <- rcpp_mmutil_svd(.data$mtx, RANK=30, TAKE_LN=T, NUM_THREADS = 16, EM_ITER = 20)
+    saveRDS(.svd, .file)
+})
+.svd <- readRDS(.file)
+```
+
+#### Can we identify troublesome batch-specific principal components?
+
+##### Show PCs computed on surface protein data
+
+
+```r
+V <- sweep(.svd$V, 2, .svd$D, `*`)
+rownames(V) <- readLines(.data$col)
+plots <- lapply(1:9, .plot.vd.fun, VD = .pca.df(V))
+plt <- wrap_plots(plots, ncol = 3)
+print(plt)
+```
+
+![](Fig/STEP4/Fig_mtconv_PC-1.png)<!-- -->
+
+* We can adjust systemic batch-specific effects by batch-balancing k-nearest neighbour method. This shouldn't be much trouble.
 
 
 ```r
 .file <- "result/step4/mtconv_bbknn.rds"
-
 if.needed(.file, {
+
     .batches <- take.batch.info(.data)
 
     .bbknn <-
-        rcpp_mmutil_bbknn_mtx(.data$mtx,
-                              r_batches = .batches, # batch label
-                              RANK = 30,            # PCs
-                              knn = 50,             # 20 nn per batch
-                              RECIPROCAL_MATCH = T, # crucial
-                              EM_ITER = 20,         # EM steps
-                              NUM_THREADS = 16,
-                              TAKE_LN = T,
-                              USE_SINGULAR_VALUES = F)
+        rcpp_mmutil_bbknn(r_svd_u = .svd$U,
+                          r_svd_v = .svd$V,
+                          r_svd_d = .svd$D,
+                          r_batches = .batches, # batch label
+                          knn = 50,             # 20 nn per batch
+                          RECIPROCAL_MATCH = T, # crucial
+                          NUM_THREADS = 16,
+                          USE_SINGULAR_VALUES = T)
 
     saveRDS(.bbknn, .file)
 })
@@ -102,13 +133,38 @@ if.needed(.file, {
 
 
 ```r
-.file <- "Tab/step4_mtconv_leiden.txt.gz"
+VD <- .bbknn$factors.adjusted
+rownames(VD) <- readLines(.data$col)
+plots <- lapply(1:9, .plot.vd.fun, VD = .pca.df(VD))
+plt <- wrap_plots(plots, ncol = 3)
+print(plt)
+```
+
+![](Fig/STEP4/Fig_mtconv_PC_adj-1.png)<!-- -->
+
+### A. Clustering cells by batch-balancing k-nearest neighbour graph
+
+
+```r
+.file <- "Tab/step4_mtconv_leiden_raw.txt.gz"
 if.needed(.file, {
     .tags <- readLines(.data$col)
-    .leiden <- run.leiden(.bbknn$knn.adj, .tags, res=.3, nrepeat = 100, min.size = 10)
+    .leiden <- run.leiden(.bbknn$knn.adj, .tags, res=.7, nrepeat = 100, min.size = 100)
     fwrite(.leiden, .file)
 })
-.leiden <- fread(.file)
+.leiden.raw <- fread(.file)
+```
+
+#### Filter out small cluster cells if we have enriched specific batches
+
+
+```r
+.file <- "Tab/step4_mtconv_leiden.txt.gz"
+if.needed(.file, {
+    .leiden <- qc.leiden(.leiden.raw, .cutoff = .75)
+    fwrite(.leiden, .file)
+})
+.leiden <- fread(.file)    
 ```
 
 [**DOWNLOAD:** mTconv Leiden results](Tab/step4_mtconv_leiden.txt.gz)
@@ -124,7 +180,7 @@ if.needed(.file, {
                          n_epochs=3000,
                          n_sgd_threads=16,
                          verbose=T,
-                         init="lvrandom",
+                         init="spectral",
                          scale=T)
 
     .tags <- readLines(.data$col)
@@ -147,10 +203,12 @@ if.needed(.file, {
 ```r
 .file <- "Tab/step4_tsne_mtconv.txt.gz"
 if.needed(.file, {
+
     .tsne <- Rtsne::Rtsne(.bbknn$factors.adjusted,
                           check_duplicates = FALSE,
                           verbose = T,
-                          num_threads = 16)
+                          num_threads = 16,
+                          perplexity = 100)
 
     .tags <- readLines(.data$col)
 
@@ -183,8 +241,6 @@ marker.stat <- fread(.file, sep = "\t")
 ```
 
 [**DOWNLOAD:** mTconv marker gene statistics](Tab/step4_mtconv_gene_stat.txt.gz)
-
-
 
 ### C. Non-linear embedding to confirm the cell clusters of mTconv cells
 
@@ -226,6 +282,8 @@ print(plt)
 
 
 [PDF](Fig/STEP4//Fig_bbknn_mtconv.pdf)
+
+##### Confirm batch/individual-specific effects
 
 
 ```r
@@ -316,7 +374,7 @@ print(plt)
 
 [PDF](Fig/STEP4//Fig_mtconv_sum_subj_member.pdf)
 
-#### UMAP for each marker gene
+#### UMAP for each marker gene (normalized expression)
 
 
 ```r
@@ -333,401 +391,15 @@ for(g in unique(x.melt$gene)) {
         scale_color_distiller(g, palette = "RdBu", direction = -1) +
         ggtitle(g)
 
-    print(plt)
-    .file <- fig.dir %&% "/Fig_mtconv_gene_umap" %&% g %&% ".pdf"
-    .gg.save(filename = .file, plot = plt, width=3, height=2.5)
+    .file <- fig.dir %&% "/Fig_mtconv_gene_umap_" %&% g %&% ".pdf"
+    .gg.save(filename = .file, plot = plt, width=3, height=2.5, cat.link = F)
+    cat("[" %&% g %&% "](" %&% .file %&% ") ")
 }
 ```
 
-![](Fig/STEP4/Fig_mtconv_gene_umap-1.png)<!-- -->
+[CD14](Fig/STEP4//Fig_mtconv_gene_umap_CD14.pdf) [CD183](Fig/STEP4//Fig_mtconv_gene_umap_CD183.pdf) [CD184](Fig/STEP4//Fig_mtconv_gene_umap_CD184.pdf) [CD185](Fig/STEP4//Fig_mtconv_gene_umap_CD185.pdf) [CD194](Fig/STEP4//Fig_mtconv_gene_umap_CD194.pdf) [CD195](Fig/STEP4//Fig_mtconv_gene_umap_CD195.pdf) [CD196](Fig/STEP4//Fig_mtconv_gene_umap_CD196.pdf) [CD226](Fig/STEP4//Fig_mtconv_gene_umap_CD226.pdf) [CD25](Fig/STEP4//Fig_mtconv_gene_umap_CD25.pdf) [CD278](Fig/STEP4//Fig_mtconv_gene_umap_CD278.pdf) [CD279](Fig/STEP4//Fig_mtconv_gene_umap_CD279.pdf) [CD366](Fig/STEP4//Fig_mtconv_gene_umap_CD366.pdf) [CD3](Fig/STEP4//Fig_mtconv_gene_umap_CD3.pdf) [IL32](Fig/STEP4//Fig_mtconv_gene_umap_IL32.pdf) [TRAF3IP3](Fig/STEP4//Fig_mtconv_gene_umap_TRAF3IP3.pdf) [CD6](Fig/STEP4//Fig_mtconv_gene_umap_CD6.pdf) [CD74](Fig/STEP4//Fig_mtconv_gene_umap_CD74.pdf) [FAS](Fig/STEP4//Fig_mtconv_gene_umap_FAS.pdf) [BRD9](Fig/STEP4//Fig_mtconv_gene_umap_BRD9.pdf) [IKZF2](Fig/STEP4//Fig_mtconv_gene_umap_IKZF2.pdf) [FOXP3](Fig/STEP4//Fig_mtconv_gene_umap_FOXP3.pdf) [SIRT2](Fig/STEP4//Fig_mtconv_gene_umap_SIRT2.pdf) [TBX21](Fig/STEP4//Fig_mtconv_gene_umap_TBX21.pdf) [FOSL2](Fig/STEP4//Fig_mtconv_gene_umap_FOSL2.pdf) [KEAP1](Fig/STEP4//Fig_mtconv_gene_umap_KEAP1.pdf) [TCF7](Fig/STEP4//Fig_mtconv_gene_umap_TCF7.pdf) [LAG3](Fig/STEP4//Fig_mtconv_gene_umap_LAG3.pdf) [LYZ](Fig/STEP4//Fig_mtconv_gene_umap_LYZ.pdf) [CD40LG](Fig/STEP4//Fig_mtconv_gene_umap_CD40LG.pdf) [CORO1A](Fig/STEP4//Fig_mtconv_gene_umap_CORO1A.pdf) [CTSH](Fig/STEP4//Fig_mtconv_gene_umap_CTSH.pdf) [GSDMD](Fig/STEP4//Fig_mtconv_gene_umap_GSDMD.pdf) [GATA3](Fig/STEP4//Fig_mtconv_gene_umap_GATA3.pdf) [KLRB1](Fig/STEP4//Fig_mtconv_gene_umap_KLRB1.pdf) [BACH2](Fig/STEP4//Fig_mtconv_gene_umap_BACH2.pdf) [CCR6](Fig/STEP4//Fig_mtconv_gene_umap_CCR6.pdf) [GZMK](Fig/STEP4//Fig_mtconv_gene_umap_GZMK.pdf) [FOXP1](Fig/STEP4//Fig_mtconv_gene_umap_FOXP1.pdf) [HDAC1](Fig/STEP4//Fig_mtconv_gene_umap_HDAC1.pdf) [CD2](Fig/STEP4//Fig_mtconv_gene_umap_CD2.pdf) [SGK1](Fig/STEP4//Fig_mtconv_gene_umap_SGK1.pdf) [MT2A](Fig/STEP4//Fig_mtconv_gene_umap_MT2A.pdf) [S1PR4](Fig/STEP4//Fig_mtconv_gene_umap_S1PR4.pdf) [CCR7](Fig/STEP4//Fig_mtconv_gene_umap_CCR7.pdf) [NR1D1](Fig/STEP4//Fig_mtconv_gene_umap_NR1D1.pdf) [KLF2](Fig/STEP4//Fig_mtconv_gene_umap_KLF2.pdf) [MAP1S](Fig/STEP4//Fig_mtconv_gene_umap_MAP1S.pdf) [GIMAP4](Fig/STEP4//Fig_mtconv_gene_umap_GIMAP4.pdf) [IL2RA](Fig/STEP4//Fig_mtconv_gene_umap_IL2RA.pdf) [HAVCR2](Fig/STEP4//Fig_mtconv_gene_umap_HAVCR2.pdf) [ITM2C](Fig/STEP4//Fig_mtconv_gene_umap_ITM2C.pdf) [MYC](Fig/STEP4//Fig_mtconv_gene_umap_MYC.pdf) [LEF1](Fig/STEP4//Fig_mtconv_gene_umap_LEF1.pdf) [C1orf162](Fig/STEP4//Fig_mtconv_gene_umap_C1orf162.pdf) [RORC](Fig/STEP4//Fig_mtconv_gene_umap_RORC.pdf) [PSPH](Fig/STEP4//Fig_mtconv_gene_umap_PSPH.pdf) [CDKN2A](Fig/STEP4//Fig_mtconv_gene_umap_CDKN2A.pdf) [FLI1](Fig/STEP4//Fig_mtconv_gene_umap_FLI1.pdf) [BATF](Fig/STEP4//Fig_mtconv_gene_umap_BATF.pdf) [TSC22D3](Fig/STEP4//Fig_mtconv_gene_umap_TSC22D3.pdf) [TNFRSF14](Fig/STEP4//Fig_mtconv_gene_umap_TNFRSF14.pdf) [IFNGR2](Fig/STEP4//Fig_mtconv_gene_umap_IFNGR2.pdf) [CXCR5](Fig/STEP4//Fig_mtconv_gene_umap_CXCR5.pdf) [LMNA](Fig/STEP4//Fig_mtconv_gene_umap_LMNA.pdf) [GBP4](Fig/STEP4//Fig_mtconv_gene_umap_GBP4.pdf) [CTLA4](Fig/STEP4//Fig_mtconv_gene_umap_CTLA4.pdf) [HPGD](Fig/STEP4//Fig_mtconv_gene_umap_HPGD.pdf) [CDCA7L](Fig/STEP4//Fig_mtconv_gene_umap_CDCA7L.pdf) [ABCA1](Fig/STEP4//Fig_mtconv_gene_umap_ABCA1.pdf) [B2M](Fig/STEP4//Fig_mtconv_gene_umap_B2M.pdf) [IRF2](Fig/STEP4//Fig_mtconv_gene_umap_IRF2.pdf) [IL7R](Fig/STEP4//Fig_mtconv_gene_umap_IL7R.pdf) [GPR25](Fig/STEP4//Fig_mtconv_gene_umap_GPR25.pdf) [ISG20](Fig/STEP4//Fig_mtconv_gene_umap_ISG20.pdf) [JUN](Fig/STEP4//Fig_mtconv_gene_umap_JUN.pdf) [CD28](Fig/STEP4//Fig_mtconv_gene_umap_CD28.pdf) [CCR8](Fig/STEP4//Fig_mtconv_gene_umap_CCR8.pdf) [TIGIT](Fig/STEP4//Fig_mtconv_gene_umap_TIGIT.pdf) [SATB1](Fig/STEP4//Fig_mtconv_gene_umap_SATB1.pdf) [ANXA2](Fig/STEP4//Fig_mtconv_gene_umap_ANXA2.pdf) [CCR4](Fig/STEP4//Fig_mtconv_gene_umap_CCR4.pdf) [CXCR3](Fig/STEP4//Fig_mtconv_gene_umap_CXCR3.pdf) [TNFRSF4](Fig/STEP4//Fig_mtconv_gene_umap_TNFRSF4.pdf) [PDCD1](Fig/STEP4//Fig_mtconv_gene_umap_PDCD1.pdf) [SELL](Fig/STEP4//Fig_mtconv_gene_umap_SELL.pdf) [FHIT](Fig/STEP4//Fig_mtconv_gene_umap_FHIT.pdf) [HLA-DRB1](Fig/STEP4//Fig_mtconv_gene_umap_HLA-DRB1.pdf) [S100A4](Fig/STEP4//Fig_mtconv_gene_umap_S100A4.pdf) [RPS26](Fig/STEP4//Fig_mtconv_gene_umap_RPS26.pdf) [CD3E](Fig/STEP4//Fig_mtconv_gene_umap_CD3E.pdf) [HLA-DRA](Fig/STEP4//Fig_mtconv_gene_umap_HLA-DRA.pdf) [HLA-C](Fig/STEP4//Fig_mtconv_gene_umap_HLA-C.pdf) [HLA-E](Fig/STEP4//Fig_mtconv_gene_umap_HLA-E.pdf) [HLA-B](Fig/STEP4//Fig_mtconv_gene_umap_HLA-B.pdf) [APOBEC3G](Fig/STEP4//Fig_mtconv_gene_umap_APOBEC3G.pdf) [MALAT1](Fig/STEP4//Fig_mtconv_gene_umap_MALAT1.pdf) [HLA-DR](Fig/STEP4//Fig_mtconv_gene_umap_HLA-DR.pdf) 
 
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapCD14.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-2.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapCD183.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-3.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapCD184.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-4.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapCD185.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-5.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapCD194.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-6.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapCD195.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-7.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapCD196.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-8.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapCD226.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-9.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapCD25.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-10.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapCD278.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-11.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapCD279.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-12.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapCD366.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-13.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapCD3.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-14.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapIL32.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-15.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapTRAF3IP3.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-16.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapCD6.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-17.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapCD74.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-18.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapFAS.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-19.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapBRD9.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-20.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapIKZF2.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-21.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapFOXP3.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-22.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapSIRT2.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-23.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapTBX21.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-24.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapFOSL2.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-25.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapKEAP1.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-26.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapTCF7.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-27.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapLAG3.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-28.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapLYZ.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-29.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapCD40LG.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-30.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapCORO1A.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-31.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapCTSH.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-32.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapGSDMD.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-33.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapGATA3.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-34.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapKLRB1.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-35.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapBACH2.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-36.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapCCR6.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-37.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapGZMK.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-38.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapFOXP1.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-39.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapHDAC1.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-40.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapCD2.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-41.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapSGK1.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-42.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapMT2A.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-43.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapS1PR4.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-44.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapCCR7.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-45.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapNR1D1.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-46.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapKLF2.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-47.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapMAP1S.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-48.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapGIMAP4.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-49.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapIL2RA.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-50.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapHAVCR2.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-51.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapITM2C.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-52.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapMYC.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-53.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapLEF1.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-54.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapC1orf162.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-55.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapRORC.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-56.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapPSPH.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-57.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapCDKN2A.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-58.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapFLI1.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-59.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapBATF.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-60.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapTSC22D3.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-61.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapTNFRSF14.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-62.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapIFNGR2.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-63.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapCXCR5.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-64.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapLMNA.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-65.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapGBP4.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-66.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapCTLA4.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-67.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapHPGD.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-68.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapCDCA7L.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-69.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapABCA1.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-70.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapB2M.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-71.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapIRF2.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-72.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapIL7R.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-73.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapGPR25.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-74.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapISG20.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-75.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapJUN.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-76.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapCD28.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-77.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapCCR8.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-78.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapTIGIT.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-79.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapSATB1.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-80.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapANXA2.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-81.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapCCR4.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-82.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapCXCR3.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-83.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapTNFRSF4.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-84.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapPDCD1.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-85.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapSELL.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-86.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapFHIT.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-87.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapHLA-DRB1.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-88.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapS100A4.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-89.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapRPS26.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-90.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapCD3E.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-91.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapHLA-DRA.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-92.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapHLA-C.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-93.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapHLA-E.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-94.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapHLA-B.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-95.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapAPOBEC3G.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-96.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapMALAT1.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_umap-97.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_umapHLA-DR.pdf)
-
-#### tSNE for each marker gene
+#### tSNE for each marker gene (normalized expression)
 
 
 ```r
@@ -744,399 +416,13 @@ for(g in unique(x.melt$gene)) {
         scale_color_distiller(g, palette = "RdBu", direction = -1) +
         ggtitle(g)
 
-    print(plt)
-    .file <- fig.dir %&% "/Fig_mtconv_gene_tsne" %&% g %&% ".pdf"
-    .gg.save(filename = .file, plot = plt, width=3, height=2.5)
+    .file <- fig.dir %&% "/Fig_mtconv_gene_tsne_" %&% g %&% ".pdf"
+    .gg.save(filename = .file, plot = plt, width=3, height=2.5, cat.link = F)
+    cat("[" %&% g %&% "](" %&% .file %&% ") ")
 }
 ```
 
-![](Fig/STEP4/Fig_mtconv_gene_tsne-1.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneCD14.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-2.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneCD183.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-3.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneCD184.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-4.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneCD185.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-5.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneCD194.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-6.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneCD195.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-7.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneCD196.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-8.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneCD226.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-9.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneCD25.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-10.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneCD278.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-11.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneCD279.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-12.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneCD366.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-13.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneCD3.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-14.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneIL32.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-15.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneTRAF3IP3.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-16.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneCD6.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-17.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneCD74.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-18.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneFAS.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-19.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneBRD9.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-20.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneIKZF2.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-21.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneFOXP3.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-22.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneSIRT2.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-23.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneTBX21.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-24.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneFOSL2.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-25.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneKEAP1.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-26.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneTCF7.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-27.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneLAG3.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-28.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneLYZ.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-29.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneCD40LG.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-30.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneCORO1A.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-31.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneCTSH.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-32.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneGSDMD.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-33.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneGATA3.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-34.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneKLRB1.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-35.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneBACH2.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-36.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneCCR6.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-37.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneGZMK.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-38.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneFOXP1.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-39.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneHDAC1.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-40.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneCD2.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-41.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneSGK1.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-42.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneMT2A.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-43.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneS1PR4.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-44.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneCCR7.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-45.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneNR1D1.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-46.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneKLF2.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-47.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneMAP1S.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-48.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneGIMAP4.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-49.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneIL2RA.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-50.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneHAVCR2.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-51.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneITM2C.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-52.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneMYC.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-53.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneLEF1.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-54.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneC1orf162.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-55.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneRORC.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-56.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsnePSPH.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-57.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneCDKN2A.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-58.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneFLI1.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-59.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneBATF.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-60.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneTSC22D3.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-61.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneTNFRSF14.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-62.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneIFNGR2.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-63.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneCXCR5.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-64.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneLMNA.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-65.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneGBP4.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-66.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneCTLA4.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-67.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneHPGD.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-68.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneCDCA7L.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-69.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneABCA1.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-70.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneB2M.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-71.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneIRF2.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-72.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneIL7R.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-73.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneGPR25.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-74.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneISG20.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-75.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneJUN.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-76.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneCD28.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-77.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneCCR8.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-78.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneTIGIT.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-79.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneSATB1.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-80.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneANXA2.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-81.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneCCR4.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-82.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneCXCR3.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-83.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneTNFRSF4.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-84.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsnePDCD1.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-85.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneSELL.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-86.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneFHIT.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-87.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneHLA-DRB1.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-88.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneS100A4.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-89.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneRPS26.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-90.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneCD3E.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-91.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneHLA-DRA.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-92.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneHLA-C.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-93.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneHLA-E.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-94.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneHLA-B.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-95.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneAPOBEC3G.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-96.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneMALAT1.pdf)
-
-![](Fig/STEP4/Fig_mtconv_gene_tsne-97.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtconv_gene_tsneHLA-DR.pdf)
+[CD14](Fig/STEP4//Fig_mtconv_gene_tsne_CD14.pdf) [CD183](Fig/STEP4//Fig_mtconv_gene_tsne_CD183.pdf) [CD184](Fig/STEP4//Fig_mtconv_gene_tsne_CD184.pdf) [CD185](Fig/STEP4//Fig_mtconv_gene_tsne_CD185.pdf) [CD194](Fig/STEP4//Fig_mtconv_gene_tsne_CD194.pdf) [CD195](Fig/STEP4//Fig_mtconv_gene_tsne_CD195.pdf) [CD196](Fig/STEP4//Fig_mtconv_gene_tsne_CD196.pdf) [CD226](Fig/STEP4//Fig_mtconv_gene_tsne_CD226.pdf) [CD25](Fig/STEP4//Fig_mtconv_gene_tsne_CD25.pdf) [CD278](Fig/STEP4//Fig_mtconv_gene_tsne_CD278.pdf) [CD279](Fig/STEP4//Fig_mtconv_gene_tsne_CD279.pdf) [CD366](Fig/STEP4//Fig_mtconv_gene_tsne_CD366.pdf) [CD3](Fig/STEP4//Fig_mtconv_gene_tsne_CD3.pdf) [IL32](Fig/STEP4//Fig_mtconv_gene_tsne_IL32.pdf) [TRAF3IP3](Fig/STEP4//Fig_mtconv_gene_tsne_TRAF3IP3.pdf) [CD6](Fig/STEP4//Fig_mtconv_gene_tsne_CD6.pdf) [CD74](Fig/STEP4//Fig_mtconv_gene_tsne_CD74.pdf) [FAS](Fig/STEP4//Fig_mtconv_gene_tsne_FAS.pdf) [BRD9](Fig/STEP4//Fig_mtconv_gene_tsne_BRD9.pdf) [IKZF2](Fig/STEP4//Fig_mtconv_gene_tsne_IKZF2.pdf) [FOXP3](Fig/STEP4//Fig_mtconv_gene_tsne_FOXP3.pdf) [SIRT2](Fig/STEP4//Fig_mtconv_gene_tsne_SIRT2.pdf) [TBX21](Fig/STEP4//Fig_mtconv_gene_tsne_TBX21.pdf) [FOSL2](Fig/STEP4//Fig_mtconv_gene_tsne_FOSL2.pdf) [KEAP1](Fig/STEP4//Fig_mtconv_gene_tsne_KEAP1.pdf) [TCF7](Fig/STEP4//Fig_mtconv_gene_tsne_TCF7.pdf) [LAG3](Fig/STEP4//Fig_mtconv_gene_tsne_LAG3.pdf) [LYZ](Fig/STEP4//Fig_mtconv_gene_tsne_LYZ.pdf) [CD40LG](Fig/STEP4//Fig_mtconv_gene_tsne_CD40LG.pdf) [CORO1A](Fig/STEP4//Fig_mtconv_gene_tsne_CORO1A.pdf) [CTSH](Fig/STEP4//Fig_mtconv_gene_tsne_CTSH.pdf) [GSDMD](Fig/STEP4//Fig_mtconv_gene_tsne_GSDMD.pdf) [GATA3](Fig/STEP4//Fig_mtconv_gene_tsne_GATA3.pdf) [KLRB1](Fig/STEP4//Fig_mtconv_gene_tsne_KLRB1.pdf) [BACH2](Fig/STEP4//Fig_mtconv_gene_tsne_BACH2.pdf) [CCR6](Fig/STEP4//Fig_mtconv_gene_tsne_CCR6.pdf) [GZMK](Fig/STEP4//Fig_mtconv_gene_tsne_GZMK.pdf) [FOXP1](Fig/STEP4//Fig_mtconv_gene_tsne_FOXP1.pdf) [HDAC1](Fig/STEP4//Fig_mtconv_gene_tsne_HDAC1.pdf) [CD2](Fig/STEP4//Fig_mtconv_gene_tsne_CD2.pdf) [SGK1](Fig/STEP4//Fig_mtconv_gene_tsne_SGK1.pdf) [MT2A](Fig/STEP4//Fig_mtconv_gene_tsne_MT2A.pdf) [S1PR4](Fig/STEP4//Fig_mtconv_gene_tsne_S1PR4.pdf) [CCR7](Fig/STEP4//Fig_mtconv_gene_tsne_CCR7.pdf) [NR1D1](Fig/STEP4//Fig_mtconv_gene_tsne_NR1D1.pdf) [KLF2](Fig/STEP4//Fig_mtconv_gene_tsne_KLF2.pdf) [MAP1S](Fig/STEP4//Fig_mtconv_gene_tsne_MAP1S.pdf) [GIMAP4](Fig/STEP4//Fig_mtconv_gene_tsne_GIMAP4.pdf) [IL2RA](Fig/STEP4//Fig_mtconv_gene_tsne_IL2RA.pdf) [HAVCR2](Fig/STEP4//Fig_mtconv_gene_tsne_HAVCR2.pdf) [ITM2C](Fig/STEP4//Fig_mtconv_gene_tsne_ITM2C.pdf) [MYC](Fig/STEP4//Fig_mtconv_gene_tsne_MYC.pdf) [LEF1](Fig/STEP4//Fig_mtconv_gene_tsne_LEF1.pdf) [C1orf162](Fig/STEP4//Fig_mtconv_gene_tsne_C1orf162.pdf) [RORC](Fig/STEP4//Fig_mtconv_gene_tsne_RORC.pdf) [PSPH](Fig/STEP4//Fig_mtconv_gene_tsne_PSPH.pdf) [CDKN2A](Fig/STEP4//Fig_mtconv_gene_tsne_CDKN2A.pdf) [FLI1](Fig/STEP4//Fig_mtconv_gene_tsne_FLI1.pdf) [BATF](Fig/STEP4//Fig_mtconv_gene_tsne_BATF.pdf) [TSC22D3](Fig/STEP4//Fig_mtconv_gene_tsne_TSC22D3.pdf) [TNFRSF14](Fig/STEP4//Fig_mtconv_gene_tsne_TNFRSF14.pdf) [IFNGR2](Fig/STEP4//Fig_mtconv_gene_tsne_IFNGR2.pdf) [CXCR5](Fig/STEP4//Fig_mtconv_gene_tsne_CXCR5.pdf) [LMNA](Fig/STEP4//Fig_mtconv_gene_tsne_LMNA.pdf) [GBP4](Fig/STEP4//Fig_mtconv_gene_tsne_GBP4.pdf) [CTLA4](Fig/STEP4//Fig_mtconv_gene_tsne_CTLA4.pdf) [HPGD](Fig/STEP4//Fig_mtconv_gene_tsne_HPGD.pdf) [CDCA7L](Fig/STEP4//Fig_mtconv_gene_tsne_CDCA7L.pdf) [ABCA1](Fig/STEP4//Fig_mtconv_gene_tsne_ABCA1.pdf) [B2M](Fig/STEP4//Fig_mtconv_gene_tsne_B2M.pdf) [IRF2](Fig/STEP4//Fig_mtconv_gene_tsne_IRF2.pdf) [IL7R](Fig/STEP4//Fig_mtconv_gene_tsne_IL7R.pdf) [GPR25](Fig/STEP4//Fig_mtconv_gene_tsne_GPR25.pdf) [ISG20](Fig/STEP4//Fig_mtconv_gene_tsne_ISG20.pdf) [JUN](Fig/STEP4//Fig_mtconv_gene_tsne_JUN.pdf) [CD28](Fig/STEP4//Fig_mtconv_gene_tsne_CD28.pdf) [CCR8](Fig/STEP4//Fig_mtconv_gene_tsne_CCR8.pdf) [TIGIT](Fig/STEP4//Fig_mtconv_gene_tsne_TIGIT.pdf) [SATB1](Fig/STEP4//Fig_mtconv_gene_tsne_SATB1.pdf) [ANXA2](Fig/STEP4//Fig_mtconv_gene_tsne_ANXA2.pdf) [CCR4](Fig/STEP4//Fig_mtconv_gene_tsne_CCR4.pdf) [CXCR3](Fig/STEP4//Fig_mtconv_gene_tsne_CXCR3.pdf) [TNFRSF4](Fig/STEP4//Fig_mtconv_gene_tsne_TNFRSF4.pdf) [PDCD1](Fig/STEP4//Fig_mtconv_gene_tsne_PDCD1.pdf) [SELL](Fig/STEP4//Fig_mtconv_gene_tsne_SELL.pdf) [FHIT](Fig/STEP4//Fig_mtconv_gene_tsne_FHIT.pdf) [HLA-DRB1](Fig/STEP4//Fig_mtconv_gene_tsne_HLA-DRB1.pdf) [S100A4](Fig/STEP4//Fig_mtconv_gene_tsne_S100A4.pdf) [RPS26](Fig/STEP4//Fig_mtconv_gene_tsne_RPS26.pdf) [CD3E](Fig/STEP4//Fig_mtconv_gene_tsne_CD3E.pdf) [HLA-DRA](Fig/STEP4//Fig_mtconv_gene_tsne_HLA-DRA.pdf) [HLA-C](Fig/STEP4//Fig_mtconv_gene_tsne_HLA-C.pdf) [HLA-E](Fig/STEP4//Fig_mtconv_gene_tsne_HLA-E.pdf) [HLA-B](Fig/STEP4//Fig_mtconv_gene_tsne_HLA-B.pdf) [APOBEC3G](Fig/STEP4//Fig_mtconv_gene_tsne_APOBEC3G.pdf) [MALAT1](Fig/STEP4//Fig_mtconv_gene_tsne_MALAT1.pdf) [HLA-DR](Fig/STEP4//Fig_mtconv_gene_tsne_HLA-DR.pdf) 
 
 ### E. Basic statistics
 
@@ -1197,25 +483,51 @@ if.needed(.data, {
 })
 ```
 
-### A. Clustering cells by batch-balancing k-nearest neighbour graph
+### Perform outlier Q/C to detect and remove batch-specific cells
+
+
+```r
+.file <- "result/step4/mtreg_svd.rds"
+if.needed(.file, {
+    .svd <- rcpp_mmutil_svd(.data$mtx, RANK=30, TAKE_LN=T, NUM_THREADS = 16, EM_ITER = 20)
+    saveRDS(.svd, .file)
+})
+.svd <- readRDS(.file)
+```
+
+#### Can we identify troublesome batch-specific principal components?
+
+##### Show PCs computed on surface protein data
+
+
+```r
+V <- sweep(.svd$V, 2, .svd$D, `*`)
+rownames(V) <- readLines(.data$col)
+plots <- lapply(1:9, .plot.vd.fun, VD = .pca.df(V))
+plt <- wrap_plots(plots, ncol = 3)
+print(plt)
+```
+
+![](Fig/STEP4/Fig_mtreg_PC-1.png)<!-- -->
+
+* We can adjust systemic batch-specific effects by batch-balancing k-nearest neighbour method. This shouldn't be much trouble.
 
 
 ```r
 .file <- "result/step4/mtreg_bbknn.rds"
-
 if.needed(.file, {
+
     .batches <- take.batch.info(.data)
 
     .bbknn <-
-        rcpp_mmutil_bbknn_mtx(.data$mtx,
-                              r_batches = .batches, # batch label
-                              RANK = 30,            # PCs
-                              knn = 50,             # 20 nn per batch
-                              RECIPROCAL_MATCH = T, # crucial
-                              EM_ITER = 20,         # EM steps
-                              NUM_THREADS = 16,
-                              TAKE_LN = T,
-                              USE_SINGULAR_VALUES = F)
+        rcpp_mmutil_bbknn(r_svd_u = .svd$U,
+                          r_svd_v = .svd$V,
+                          r_svd_d = .svd$D,
+                          r_batches = .batches, # batch label
+                          knn = 50,             # 20 nn per batch
+                          RECIPROCAL_MATCH = T, # crucial
+                          NUM_THREADS = 16,
+                          USE_SINGULAR_VALUES = T)
 
     saveRDS(.bbknn, .file)
 })
@@ -1224,13 +536,39 @@ if.needed(.file, {
 
 
 ```r
-.file <- "Tab/step4_mtreg_leiden.txt.gz"
+VD <- .bbknn$factors.adjusted
+rownames(VD) <- readLines(.data$col)
+plots <- lapply(1:9, .plot.vd.fun, VD = .pca.df(VD))
+plt <- wrap_plots(plots, ncol = 3)
+print(plt)
+```
+
+![](Fig/STEP4/Fig_mtreg_PC_adj-1.png)<!-- -->
+
+### A. Clustering cells by batch-balancing k-nearest neighbour graph
+
+
+
+```r
+.file <- "Tab/step4_mtreg_leiden_raw.txt.gz"
 if.needed(.file, {
     .tags <- readLines(.data$col)
-    .leiden <- run.leiden(.bbknn$knn.adj, .tags, res=.3, nrepeat = 100, min.size = 10)
+    .leiden <- run.leiden(.bbknn$knn.adj, .tags, res=.7, nrepeat = 100, min.size = 100)
     fwrite(.leiden, .file)
 })
-.leiden <- fread(.file)
+.leiden.raw <- fread(.file)
+```
+
+#### Filter out small cluster cells if we have enriched specific batches
+
+
+```r
+.file <- "Tab/step4_mtreg_leiden.txt.gz"
+if.needed(.file, {
+    .leiden <- qc.leiden(.leiden.raw, .cutoff = .75)
+    fwrite(.leiden, .file)
+})
+.leiden <- fread(.file)    
 ```
 
 [**DOWNLOAD:** mTreg Leiden results](Tab/step4_mtreg_leiden.txt.gz)
@@ -1246,7 +584,7 @@ if.needed(.file, {
                          n_epochs=3000,
                          n_sgd_threads=16,
                          verbose=T,
-                         init="lvrandom",
+                         init="spectral",
                          scale=T)
 
     .tags <- readLines(.data$col)
@@ -1348,6 +686,8 @@ print(plt)
 
 [PDF](Fig/STEP4//Fig_bbknn_mtreg.pdf)
 
+##### Confirm batch/individual-specific effects
+
 
 ```r
 .cols <- .more.colors(10, nc.pal=7, .palette="Set1")
@@ -1390,7 +730,7 @@ x.melt <- bbknn.x.melt(.data, .bbknn, .markers)
 .sum <-
     .sum.subj[, .(x = median(x)), by = .(gene, membership)] %>%
     mutate(col = `gene`, row = membership, weight = x) %>%
-    col.order(1:10, TRUE) %>%
+    col.order(1:15, TRUE) %>%
     as.data.table()
 
 plt <-
@@ -1452,399 +792,13 @@ for(g in unique(x.melt$gene)) {
         scale_color_distiller(g, palette = "RdBu", direction = -1) +
         ggtitle(g)
 
-    print(plt)
-    .file <- fig.dir %&% "/Fig_mtreg_gene_umap" %&% g %&% ".pdf"
-    .gg.save(filename = .file, plot = plt, width=3, height=2.5)
+    .file <- fig.dir %&% "/Fig_mtreg_gene_umap_" %&% g %&% ".pdf"
+    .gg.save(filename = .file, plot = plt, width=3, height=2.5, cat.link = F)
+    cat("[" %&% g %&% "](" %&% .file %&% ") ")
 }
 ```
 
-![](Fig/STEP4/Fig_mtreg_gene_umap-1.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapCD14.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-2.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapCD183.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-3.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapCD184.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-4.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapCD185.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-5.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapCD194.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-6.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapCD195.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-7.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapCD196.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-8.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapCD226.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-9.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapCD25.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-10.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapCD278.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-11.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapCD279.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-12.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapCD366.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-13.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapCD3.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-14.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapIL32.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-15.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapTRAF3IP3.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-16.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapCD6.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-17.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapCD74.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-18.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapFAS.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-19.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapBRD9.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-20.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapIKZF2.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-21.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapFOXP3.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-22.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapSIRT2.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-23.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapTBX21.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-24.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapFOSL2.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-25.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapKEAP1.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-26.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapTCF7.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-27.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapLAG3.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-28.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapLYZ.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-29.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapCD40LG.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-30.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapCORO1A.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-31.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapCTSH.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-32.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapGSDMD.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-33.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapGATA3.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-34.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapKLRB1.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-35.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapBACH2.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-36.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapCCR6.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-37.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapGZMK.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-38.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapFOXP1.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-39.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapHDAC1.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-40.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapCD2.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-41.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapSGK1.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-42.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapMT2A.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-43.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapS1PR4.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-44.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapCCR7.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-45.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapNR1D1.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-46.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapKLF2.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-47.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapMAP1S.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-48.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapGIMAP4.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-49.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapIL2RA.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-50.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapHAVCR2.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-51.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapITM2C.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-52.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapMYC.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-53.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapLEF1.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-54.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapC1orf162.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-55.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapRORC.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-56.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapPSPH.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-57.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapCDKN2A.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-58.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapFLI1.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-59.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapBATF.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-60.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapTSC22D3.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-61.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapTNFRSF14.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-62.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapIFNGR2.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-63.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapCXCR5.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-64.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapLMNA.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-65.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapGBP4.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-66.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapCTLA4.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-67.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapHPGD.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-68.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapCDCA7L.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-69.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapABCA1.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-70.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapB2M.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-71.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapIRF2.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-72.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapIL7R.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-73.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapGPR25.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-74.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapISG20.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-75.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapJUN.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-76.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapCD28.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-77.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapCCR8.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-78.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapTIGIT.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-79.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapSATB1.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-80.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapANXA2.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-81.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapCCR4.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-82.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapCXCR3.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-83.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapTNFRSF4.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-84.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapPDCD1.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-85.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapSELL.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-86.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapFHIT.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-87.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapHLA-DRB1.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-88.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapS100A4.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-89.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapRPS26.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-90.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapCD3E.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-91.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapHLA-DRA.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-92.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapHLA-C.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-93.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapHLA-E.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-94.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapHLA-B.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-95.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapAPOBEC3G.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-96.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapMALAT1.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_umap-97.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_umapHLA-DR.pdf)
+[CD14](Fig/STEP4//Fig_mtreg_gene_umap_CD14.pdf) [CD183](Fig/STEP4//Fig_mtreg_gene_umap_CD183.pdf) [CD184](Fig/STEP4//Fig_mtreg_gene_umap_CD184.pdf) [CD185](Fig/STEP4//Fig_mtreg_gene_umap_CD185.pdf) [CD194](Fig/STEP4//Fig_mtreg_gene_umap_CD194.pdf) [CD195](Fig/STEP4//Fig_mtreg_gene_umap_CD195.pdf) [CD196](Fig/STEP4//Fig_mtreg_gene_umap_CD196.pdf) [CD226](Fig/STEP4//Fig_mtreg_gene_umap_CD226.pdf) [CD25](Fig/STEP4//Fig_mtreg_gene_umap_CD25.pdf) [CD278](Fig/STEP4//Fig_mtreg_gene_umap_CD278.pdf) [CD279](Fig/STEP4//Fig_mtreg_gene_umap_CD279.pdf) [CD366](Fig/STEP4//Fig_mtreg_gene_umap_CD366.pdf) [CD3](Fig/STEP4//Fig_mtreg_gene_umap_CD3.pdf) [IL32](Fig/STEP4//Fig_mtreg_gene_umap_IL32.pdf) [TRAF3IP3](Fig/STEP4//Fig_mtreg_gene_umap_TRAF3IP3.pdf) [CD6](Fig/STEP4//Fig_mtreg_gene_umap_CD6.pdf) [CD74](Fig/STEP4//Fig_mtreg_gene_umap_CD74.pdf) [FAS](Fig/STEP4//Fig_mtreg_gene_umap_FAS.pdf) [BRD9](Fig/STEP4//Fig_mtreg_gene_umap_BRD9.pdf) [IKZF2](Fig/STEP4//Fig_mtreg_gene_umap_IKZF2.pdf) [FOXP3](Fig/STEP4//Fig_mtreg_gene_umap_FOXP3.pdf) [SIRT2](Fig/STEP4//Fig_mtreg_gene_umap_SIRT2.pdf) [TBX21](Fig/STEP4//Fig_mtreg_gene_umap_TBX21.pdf) [FOSL2](Fig/STEP4//Fig_mtreg_gene_umap_FOSL2.pdf) [KEAP1](Fig/STEP4//Fig_mtreg_gene_umap_KEAP1.pdf) [TCF7](Fig/STEP4//Fig_mtreg_gene_umap_TCF7.pdf) [LAG3](Fig/STEP4//Fig_mtreg_gene_umap_LAG3.pdf) [LYZ](Fig/STEP4//Fig_mtreg_gene_umap_LYZ.pdf) [CD40LG](Fig/STEP4//Fig_mtreg_gene_umap_CD40LG.pdf) [CORO1A](Fig/STEP4//Fig_mtreg_gene_umap_CORO1A.pdf) [CTSH](Fig/STEP4//Fig_mtreg_gene_umap_CTSH.pdf) [GSDMD](Fig/STEP4//Fig_mtreg_gene_umap_GSDMD.pdf) [GATA3](Fig/STEP4//Fig_mtreg_gene_umap_GATA3.pdf) [KLRB1](Fig/STEP4//Fig_mtreg_gene_umap_KLRB1.pdf) [BACH2](Fig/STEP4//Fig_mtreg_gene_umap_BACH2.pdf) [CCR6](Fig/STEP4//Fig_mtreg_gene_umap_CCR6.pdf) [GZMK](Fig/STEP4//Fig_mtreg_gene_umap_GZMK.pdf) [FOXP1](Fig/STEP4//Fig_mtreg_gene_umap_FOXP1.pdf) [HDAC1](Fig/STEP4//Fig_mtreg_gene_umap_HDAC1.pdf) [CD2](Fig/STEP4//Fig_mtreg_gene_umap_CD2.pdf) [SGK1](Fig/STEP4//Fig_mtreg_gene_umap_SGK1.pdf) [MT2A](Fig/STEP4//Fig_mtreg_gene_umap_MT2A.pdf) [S1PR4](Fig/STEP4//Fig_mtreg_gene_umap_S1PR4.pdf) [CCR7](Fig/STEP4//Fig_mtreg_gene_umap_CCR7.pdf) [NR1D1](Fig/STEP4//Fig_mtreg_gene_umap_NR1D1.pdf) [KLF2](Fig/STEP4//Fig_mtreg_gene_umap_KLF2.pdf) [MAP1S](Fig/STEP4//Fig_mtreg_gene_umap_MAP1S.pdf) [GIMAP4](Fig/STEP4//Fig_mtreg_gene_umap_GIMAP4.pdf) [IL2RA](Fig/STEP4//Fig_mtreg_gene_umap_IL2RA.pdf) [HAVCR2](Fig/STEP4//Fig_mtreg_gene_umap_HAVCR2.pdf) [ITM2C](Fig/STEP4//Fig_mtreg_gene_umap_ITM2C.pdf) [MYC](Fig/STEP4//Fig_mtreg_gene_umap_MYC.pdf) [LEF1](Fig/STEP4//Fig_mtreg_gene_umap_LEF1.pdf) [C1orf162](Fig/STEP4//Fig_mtreg_gene_umap_C1orf162.pdf) [RORC](Fig/STEP4//Fig_mtreg_gene_umap_RORC.pdf) [PSPH](Fig/STEP4//Fig_mtreg_gene_umap_PSPH.pdf) [CDKN2A](Fig/STEP4//Fig_mtreg_gene_umap_CDKN2A.pdf) [FLI1](Fig/STEP4//Fig_mtreg_gene_umap_FLI1.pdf) [BATF](Fig/STEP4//Fig_mtreg_gene_umap_BATF.pdf) [TSC22D3](Fig/STEP4//Fig_mtreg_gene_umap_TSC22D3.pdf) [TNFRSF14](Fig/STEP4//Fig_mtreg_gene_umap_TNFRSF14.pdf) [IFNGR2](Fig/STEP4//Fig_mtreg_gene_umap_IFNGR2.pdf) [CXCR5](Fig/STEP4//Fig_mtreg_gene_umap_CXCR5.pdf) [LMNA](Fig/STEP4//Fig_mtreg_gene_umap_LMNA.pdf) [GBP4](Fig/STEP4//Fig_mtreg_gene_umap_GBP4.pdf) [CTLA4](Fig/STEP4//Fig_mtreg_gene_umap_CTLA4.pdf) [HPGD](Fig/STEP4//Fig_mtreg_gene_umap_HPGD.pdf) [CDCA7L](Fig/STEP4//Fig_mtreg_gene_umap_CDCA7L.pdf) [ABCA1](Fig/STEP4//Fig_mtreg_gene_umap_ABCA1.pdf) [B2M](Fig/STEP4//Fig_mtreg_gene_umap_B2M.pdf) [IRF2](Fig/STEP4//Fig_mtreg_gene_umap_IRF2.pdf) [IL7R](Fig/STEP4//Fig_mtreg_gene_umap_IL7R.pdf) [GPR25](Fig/STEP4//Fig_mtreg_gene_umap_GPR25.pdf) [ISG20](Fig/STEP4//Fig_mtreg_gene_umap_ISG20.pdf) [JUN](Fig/STEP4//Fig_mtreg_gene_umap_JUN.pdf) [CD28](Fig/STEP4//Fig_mtreg_gene_umap_CD28.pdf) [CCR8](Fig/STEP4//Fig_mtreg_gene_umap_CCR8.pdf) [TIGIT](Fig/STEP4//Fig_mtreg_gene_umap_TIGIT.pdf) [SATB1](Fig/STEP4//Fig_mtreg_gene_umap_SATB1.pdf) [ANXA2](Fig/STEP4//Fig_mtreg_gene_umap_ANXA2.pdf) [CCR4](Fig/STEP4//Fig_mtreg_gene_umap_CCR4.pdf) [CXCR3](Fig/STEP4//Fig_mtreg_gene_umap_CXCR3.pdf) [TNFRSF4](Fig/STEP4//Fig_mtreg_gene_umap_TNFRSF4.pdf) [PDCD1](Fig/STEP4//Fig_mtreg_gene_umap_PDCD1.pdf) [SELL](Fig/STEP4//Fig_mtreg_gene_umap_SELL.pdf) [FHIT](Fig/STEP4//Fig_mtreg_gene_umap_FHIT.pdf) [HLA-DRB1](Fig/STEP4//Fig_mtreg_gene_umap_HLA-DRB1.pdf) [S100A4](Fig/STEP4//Fig_mtreg_gene_umap_S100A4.pdf) [RPS26](Fig/STEP4//Fig_mtreg_gene_umap_RPS26.pdf) [CD3E](Fig/STEP4//Fig_mtreg_gene_umap_CD3E.pdf) [HLA-DRA](Fig/STEP4//Fig_mtreg_gene_umap_HLA-DRA.pdf) [HLA-C](Fig/STEP4//Fig_mtreg_gene_umap_HLA-C.pdf) [HLA-E](Fig/STEP4//Fig_mtreg_gene_umap_HLA-E.pdf) [HLA-B](Fig/STEP4//Fig_mtreg_gene_umap_HLA-B.pdf) [APOBEC3G](Fig/STEP4//Fig_mtreg_gene_umap_APOBEC3G.pdf) [MALAT1](Fig/STEP4//Fig_mtreg_gene_umap_MALAT1.pdf) [HLA-DR](Fig/STEP4//Fig_mtreg_gene_umap_HLA-DR.pdf) 
 
 #### tSNE for each marker gene
 
@@ -1863,399 +817,13 @@ for(g in unique(x.melt$gene)) {
         scale_color_distiller(g, palette = "RdBu", direction = -1) +
         ggtitle(g)
 
-    print(plt)
-    .file <- fig.dir %&% "/Fig_mtreg_gene_tsne" %&% g %&% ".pdf"
-    .gg.save(filename = .file, plot = plt, width=3, height=2.5)
+    .file <- fig.dir %&% "/Fig_mtreg_gene_tsne_" %&% g %&% ".pdf"
+    .gg.save(filename = .file, plot = plt, width=3, height=2.5, cat.link = F)
+    cat("[" %&% g %&% "](" %&% .file %&% ") ")
 }
 ```
 
-![](Fig/STEP4/Fig_mtreg_gene_tsne-1.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneCD14.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-2.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneCD183.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-3.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneCD184.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-4.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneCD185.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-5.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneCD194.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-6.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneCD195.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-7.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneCD196.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-8.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneCD226.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-9.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneCD25.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-10.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneCD278.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-11.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneCD279.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-12.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneCD366.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-13.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneCD3.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-14.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneIL32.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-15.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneTRAF3IP3.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-16.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneCD6.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-17.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneCD74.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-18.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneFAS.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-19.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneBRD9.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-20.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneIKZF2.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-21.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneFOXP3.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-22.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneSIRT2.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-23.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneTBX21.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-24.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneFOSL2.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-25.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneKEAP1.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-26.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneTCF7.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-27.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneLAG3.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-28.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneLYZ.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-29.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneCD40LG.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-30.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneCORO1A.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-31.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneCTSH.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-32.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneGSDMD.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-33.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneGATA3.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-34.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneKLRB1.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-35.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneBACH2.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-36.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneCCR6.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-37.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneGZMK.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-38.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneFOXP1.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-39.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneHDAC1.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-40.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneCD2.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-41.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneSGK1.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-42.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneMT2A.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-43.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneS1PR4.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-44.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneCCR7.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-45.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneNR1D1.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-46.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneKLF2.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-47.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneMAP1S.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-48.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneGIMAP4.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-49.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneIL2RA.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-50.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneHAVCR2.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-51.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneITM2C.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-52.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneMYC.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-53.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneLEF1.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-54.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneC1orf162.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-55.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneRORC.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-56.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsnePSPH.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-57.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneCDKN2A.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-58.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneFLI1.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-59.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneBATF.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-60.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneTSC22D3.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-61.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneTNFRSF14.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-62.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneIFNGR2.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-63.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneCXCR5.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-64.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneLMNA.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-65.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneGBP4.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-66.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneCTLA4.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-67.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneHPGD.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-68.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneCDCA7L.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-69.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneABCA1.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-70.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneB2M.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-71.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneIRF2.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-72.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneIL7R.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-73.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneGPR25.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-74.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneISG20.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-75.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneJUN.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-76.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneCD28.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-77.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneCCR8.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-78.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneTIGIT.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-79.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneSATB1.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-80.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneANXA2.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-81.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneCCR4.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-82.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneCXCR3.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-83.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneTNFRSF4.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-84.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsnePDCD1.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-85.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneSELL.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-86.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneFHIT.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-87.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneHLA-DRB1.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-88.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneS100A4.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-89.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneRPS26.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-90.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneCD3E.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-91.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneHLA-DRA.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-92.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneHLA-C.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-93.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneHLA-E.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-94.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneHLA-B.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-95.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneAPOBEC3G.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-96.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneMALAT1.pdf)
-
-![](Fig/STEP4/Fig_mtreg_gene_tsne-97.png)<!-- -->
-
-[PDF](Fig/STEP4//Fig_mtreg_gene_tsneHLA-DR.pdf)
+[CD14](Fig/STEP4//Fig_mtreg_gene_tsne_CD14.pdf) [CD183](Fig/STEP4//Fig_mtreg_gene_tsne_CD183.pdf) [CD184](Fig/STEP4//Fig_mtreg_gene_tsne_CD184.pdf) [CD185](Fig/STEP4//Fig_mtreg_gene_tsne_CD185.pdf) [CD194](Fig/STEP4//Fig_mtreg_gene_tsne_CD194.pdf) [CD195](Fig/STEP4//Fig_mtreg_gene_tsne_CD195.pdf) [CD196](Fig/STEP4//Fig_mtreg_gene_tsne_CD196.pdf) [CD226](Fig/STEP4//Fig_mtreg_gene_tsne_CD226.pdf) [CD25](Fig/STEP4//Fig_mtreg_gene_tsne_CD25.pdf) [CD278](Fig/STEP4//Fig_mtreg_gene_tsne_CD278.pdf) [CD279](Fig/STEP4//Fig_mtreg_gene_tsne_CD279.pdf) [CD366](Fig/STEP4//Fig_mtreg_gene_tsne_CD366.pdf) [CD3](Fig/STEP4//Fig_mtreg_gene_tsne_CD3.pdf) [IL32](Fig/STEP4//Fig_mtreg_gene_tsne_IL32.pdf) [TRAF3IP3](Fig/STEP4//Fig_mtreg_gene_tsne_TRAF3IP3.pdf) [CD6](Fig/STEP4//Fig_mtreg_gene_tsne_CD6.pdf) [CD74](Fig/STEP4//Fig_mtreg_gene_tsne_CD74.pdf) [FAS](Fig/STEP4//Fig_mtreg_gene_tsne_FAS.pdf) [BRD9](Fig/STEP4//Fig_mtreg_gene_tsne_BRD9.pdf) [IKZF2](Fig/STEP4//Fig_mtreg_gene_tsne_IKZF2.pdf) [FOXP3](Fig/STEP4//Fig_mtreg_gene_tsne_FOXP3.pdf) [SIRT2](Fig/STEP4//Fig_mtreg_gene_tsne_SIRT2.pdf) [TBX21](Fig/STEP4//Fig_mtreg_gene_tsne_TBX21.pdf) [FOSL2](Fig/STEP4//Fig_mtreg_gene_tsne_FOSL2.pdf) [KEAP1](Fig/STEP4//Fig_mtreg_gene_tsne_KEAP1.pdf) [TCF7](Fig/STEP4//Fig_mtreg_gene_tsne_TCF7.pdf) [LAG3](Fig/STEP4//Fig_mtreg_gene_tsne_LAG3.pdf) [LYZ](Fig/STEP4//Fig_mtreg_gene_tsne_LYZ.pdf) [CD40LG](Fig/STEP4//Fig_mtreg_gene_tsne_CD40LG.pdf) [CORO1A](Fig/STEP4//Fig_mtreg_gene_tsne_CORO1A.pdf) [CTSH](Fig/STEP4//Fig_mtreg_gene_tsne_CTSH.pdf) [GSDMD](Fig/STEP4//Fig_mtreg_gene_tsne_GSDMD.pdf) [GATA3](Fig/STEP4//Fig_mtreg_gene_tsne_GATA3.pdf) [KLRB1](Fig/STEP4//Fig_mtreg_gene_tsne_KLRB1.pdf) [BACH2](Fig/STEP4//Fig_mtreg_gene_tsne_BACH2.pdf) [CCR6](Fig/STEP4//Fig_mtreg_gene_tsne_CCR6.pdf) [GZMK](Fig/STEP4//Fig_mtreg_gene_tsne_GZMK.pdf) [FOXP1](Fig/STEP4//Fig_mtreg_gene_tsne_FOXP1.pdf) [HDAC1](Fig/STEP4//Fig_mtreg_gene_tsne_HDAC1.pdf) [CD2](Fig/STEP4//Fig_mtreg_gene_tsne_CD2.pdf) [SGK1](Fig/STEP4//Fig_mtreg_gene_tsne_SGK1.pdf) [MT2A](Fig/STEP4//Fig_mtreg_gene_tsne_MT2A.pdf) [S1PR4](Fig/STEP4//Fig_mtreg_gene_tsne_S1PR4.pdf) [CCR7](Fig/STEP4//Fig_mtreg_gene_tsne_CCR7.pdf) [NR1D1](Fig/STEP4//Fig_mtreg_gene_tsne_NR1D1.pdf) [KLF2](Fig/STEP4//Fig_mtreg_gene_tsne_KLF2.pdf) [MAP1S](Fig/STEP4//Fig_mtreg_gene_tsne_MAP1S.pdf) [GIMAP4](Fig/STEP4//Fig_mtreg_gene_tsne_GIMAP4.pdf) [IL2RA](Fig/STEP4//Fig_mtreg_gene_tsne_IL2RA.pdf) [HAVCR2](Fig/STEP4//Fig_mtreg_gene_tsne_HAVCR2.pdf) [ITM2C](Fig/STEP4//Fig_mtreg_gene_tsne_ITM2C.pdf) [MYC](Fig/STEP4//Fig_mtreg_gene_tsne_MYC.pdf) [LEF1](Fig/STEP4//Fig_mtreg_gene_tsne_LEF1.pdf) [C1orf162](Fig/STEP4//Fig_mtreg_gene_tsne_C1orf162.pdf) [RORC](Fig/STEP4//Fig_mtreg_gene_tsne_RORC.pdf) [PSPH](Fig/STEP4//Fig_mtreg_gene_tsne_PSPH.pdf) [CDKN2A](Fig/STEP4//Fig_mtreg_gene_tsne_CDKN2A.pdf) [FLI1](Fig/STEP4//Fig_mtreg_gene_tsne_FLI1.pdf) [BATF](Fig/STEP4//Fig_mtreg_gene_tsne_BATF.pdf) [TSC22D3](Fig/STEP4//Fig_mtreg_gene_tsne_TSC22D3.pdf) [TNFRSF14](Fig/STEP4//Fig_mtreg_gene_tsne_TNFRSF14.pdf) [IFNGR2](Fig/STEP4//Fig_mtreg_gene_tsne_IFNGR2.pdf) [CXCR5](Fig/STEP4//Fig_mtreg_gene_tsne_CXCR5.pdf) [LMNA](Fig/STEP4//Fig_mtreg_gene_tsne_LMNA.pdf) [GBP4](Fig/STEP4//Fig_mtreg_gene_tsne_GBP4.pdf) [CTLA4](Fig/STEP4//Fig_mtreg_gene_tsne_CTLA4.pdf) [HPGD](Fig/STEP4//Fig_mtreg_gene_tsne_HPGD.pdf) [CDCA7L](Fig/STEP4//Fig_mtreg_gene_tsne_CDCA7L.pdf) [ABCA1](Fig/STEP4//Fig_mtreg_gene_tsne_ABCA1.pdf) [B2M](Fig/STEP4//Fig_mtreg_gene_tsne_B2M.pdf) [IRF2](Fig/STEP4//Fig_mtreg_gene_tsne_IRF2.pdf) [IL7R](Fig/STEP4//Fig_mtreg_gene_tsne_IL7R.pdf) [GPR25](Fig/STEP4//Fig_mtreg_gene_tsne_GPR25.pdf) [ISG20](Fig/STEP4//Fig_mtreg_gene_tsne_ISG20.pdf) [JUN](Fig/STEP4//Fig_mtreg_gene_tsne_JUN.pdf) [CD28](Fig/STEP4//Fig_mtreg_gene_tsne_CD28.pdf) [CCR8](Fig/STEP4//Fig_mtreg_gene_tsne_CCR8.pdf) [TIGIT](Fig/STEP4//Fig_mtreg_gene_tsne_TIGIT.pdf) [SATB1](Fig/STEP4//Fig_mtreg_gene_tsne_SATB1.pdf) [ANXA2](Fig/STEP4//Fig_mtreg_gene_tsne_ANXA2.pdf) [CCR4](Fig/STEP4//Fig_mtreg_gene_tsne_CCR4.pdf) [CXCR3](Fig/STEP4//Fig_mtreg_gene_tsne_CXCR3.pdf) [TNFRSF4](Fig/STEP4//Fig_mtreg_gene_tsne_TNFRSF4.pdf) [PDCD1](Fig/STEP4//Fig_mtreg_gene_tsne_PDCD1.pdf) [SELL](Fig/STEP4//Fig_mtreg_gene_tsne_SELL.pdf) [FHIT](Fig/STEP4//Fig_mtreg_gene_tsne_FHIT.pdf) [HLA-DRB1](Fig/STEP4//Fig_mtreg_gene_tsne_HLA-DRB1.pdf) [S100A4](Fig/STEP4//Fig_mtreg_gene_tsne_S100A4.pdf) [RPS26](Fig/STEP4//Fig_mtreg_gene_tsne_RPS26.pdf) [CD3E](Fig/STEP4//Fig_mtreg_gene_tsne_CD3E.pdf) [HLA-DRA](Fig/STEP4//Fig_mtreg_gene_tsne_HLA-DRA.pdf) [HLA-C](Fig/STEP4//Fig_mtreg_gene_tsne_HLA-C.pdf) [HLA-E](Fig/STEP4//Fig_mtreg_gene_tsne_HLA-E.pdf) [HLA-B](Fig/STEP4//Fig_mtreg_gene_tsne_HLA-B.pdf) [APOBEC3G](Fig/STEP4//Fig_mtreg_gene_tsne_APOBEC3G.pdf) [MALAT1](Fig/STEP4//Fig_mtreg_gene_tsne_MALAT1.pdf) [HLA-DR](Fig/STEP4//Fig_mtreg_gene_tsne_HLA-DR.pdf) 
 
 ### E. Basic statistics
 
