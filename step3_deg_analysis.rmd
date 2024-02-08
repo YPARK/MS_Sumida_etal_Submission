@@ -23,42 +23,32 @@ library(data.table)
 library(patchwork)
 library(mmutilR)
 source("Util-rmd.R")
+source("Util-alg.R")
 .mkdir(fig.dir)
+```
+
+```{r read_data_info}
+.data <- fileset.list("result/step2/matrix_final")
+```
+
+```{r read_hash_data}
+.features <- readLines(.data$row)
+.hash <- .features[str_detect(.features, "Hash")]
+.hash.hdr <- "result/step1/hash"
+.hash.data <- fileset.list(.hash.hdr)
+.hash.info <- read.hash(.hash.data)
 ```
 
 # 1. MS vs. HC at the major cell type level
 
-```{r read_annot}
-.hash.hdr <- "result/step1/hash"
-.hash.data <- fileset.list(.hash.hdr)
-.hash.mtx <- read.dense(.hash.data$mtx)
-.hash.argmax <- apply(.hash.mtx, 2, which.max)
-
-.hash.cells <- .hash.data$col %>%
-    fread(header=F, col.names="cell") %>%
-    (function(x) {
-        x[,c("barcode","batch"):=tstrsplit(`cell`,split="_")];
-        x[, barcode := gsub(`barcode`, pattern="-[0-9]$", replacement="")];
-        x[, hash := .hash.argmax]
-        x[, batch := as.integer(`batch`)]
-        return(x);
-    })
-
-.sample.info <-
-    readxl::read_xlsx("data/Hashing list MS Treg project.xlsx", 1) %>%
-    rename(Sample = `Cell type`) %>%
-    mutate(hash = gsub("#","",`hash`)) %>%
-    mutate(hash = as.integer(`hash`)) %>%
-    mutate(disease = substr(`subject`, 1, 2))
-
-.hash.info <-
-    left_join(.hash.cells, .sample.info)
-
+```{r read_annotation}
 annot.dt <-
     fread("Tab/step2_celltype.txt.gz") %>%
     left_join(.hash.info) %>%
     na.omit()
+```
 
+```{r include = F}
 sort.col <- function(.mat, .cts, .indvs){
 
     .fun <- function(ct) paste0(.indvs, "_", ct)
@@ -92,7 +82,7 @@ combine.statistics <- function(.result){
     return(out)
 }
 
-summarize.deg <- function(.dt, tot.cutoff = 3, disease.name = "MS", control.name = "HA") {
+summarize.deg <- function(.dt, tot.cutoff = 5, disease.name = "MS", control.name = "HA") {
 
     ## adjust potential bias
     .dt[`tot` >= tot.cutoff, b := mean(cfa), by = .(gene, celltype)]
@@ -146,9 +136,7 @@ summarize.deg <- function(.dt, tot.cutoff = 3, disease.name = "MS", control.name
 }
 ```
 
-
-```{r estimate_deg_statistics}
-.data <- fileset.list("result/step1/matrix_final")
+```{r prepare_deg_data}
 .mkdir("result/step3/deg/")
 .deg.data <- fileset.list("result/step3/deg/hc_ms")
 
@@ -160,7 +148,10 @@ if.needed(.deg.data, {
                                           unique(annot.dt$tag),
                                           "result/step3/deg/hc_ms")
 })
+```
 
+
+```{r estimate_deg_statistics}
 .file <- "result/step3/deg/hc_ms.rds"
 
 if.needed(.file, {
@@ -208,17 +199,23 @@ hc.ms.deg <- summarize.deg(.hc.ms.dt)
 
 ### Comparison with the bulk DEG results
 
-```{r}
-plot.bulk.sc <- function(.sc, .bulk, fdr.cutoff = .01, tot.cutoff = 100, qv.cutoff = .2, n.top = 7) {
+```{r include = F}
+plot.bulk.sc <- function(.sc, .bulk,
+                         fdr.cutoff = .01,
+                         tot.cutoff = 500,
+                         qv.cutoff = .2,
+                         n.top = 7) {
 
     .dt <- left_join(.bulk, .sc) %>%
-        mutate(sc.z = pmin(pmax(scale(z), -10), 10)) %>%
+        mutate(sc.z = z) %>% 
         na.omit %>%
         arrange(abs(sc.z)) %>%
         as.data.table
 
     .dt.show <-
-        .dt[`fdr` < `fdr.cutoff` & `bulk.qv` < qv.cutoff & `tot` > tot.cutoff] %>%
+        .dt[`fdr` < `fdr.cutoff` &
+            `bulk.qv` < qv.cutoff &
+            `tot` > tot.cutoff] %>%
         group_by(sign(sc.z)) %>%
         top_n(n.top, -log10(pv)) %>%
         ungroup() %>%
@@ -231,15 +228,22 @@ plot.bulk.sc <- function(.sc, .bulk, fdr.cutoff = .01, tot.cutoff = 100, qv.cuto
     .dt.neg <- .dt.show[z < 0]
 
     .scale.size <-
-        scale_size_continuous(range=c(1,2.5), labels = function(x) num.sci(10^(-x)), guide = "none")
+        scale_size_continuous(range=c(1, 2),
+                              labels = function(x) num.sci(10^(-x)),
+                              guide = "none")
+
+    y.lim <- range(c(.dt.neg$sc.z, .dt.pos$sc.z))
 
     plt <-
         ggplot(.dt, aes(x = bulk.t, y = sc.z)) +
-        theme_minimal() +
-        xlab("bulk RNA-seq DEG effect") + ylab("scRNA-seq DEG effect") +
-        scale_x_continuous(limits = c(-7, 7)) +
-        geom_point(aes(size = -log10(pmax(pv, bulk.pv))),
-                   stroke=.2, pch=21, colour="gray40") +
+        theme_classic() +
+        xlab("bulk RNA-seq DEG effect") +
+        ylab("scRNA-seq DEG effect") +
+        scale_y_continuous(limits = y.lim) +
+        ggrastr::rasterise(
+                     geom_point(aes(size = -log10(pmax(pv, bulk.pv))),
+                                stroke=.2, pch=21, colour="gray40"),
+                     dpi=300) +
         .scale.size +
         geom_vline(xintercept = 0, linewidth = .1) +
         geom_hline(yintercept = 0, linewidth = .1) +
@@ -250,26 +254,20 @@ plot.bulk.sc <- function(.sc, .bulk, fdr.cutoff = .01, tot.cutoff = 100, qv.cuto
     if(nrow(.dt.pos) > 0) {
         plt <- plt +
             geom_point(data=.dt.pos, pch=21, fill="#ef8a62") +
-            ggrepel::geom_label_repel(data=.dt.pos, .aes,
-                                      size = 3, vjust=1, hjust=1,
-                                      segment.size = .1,
+            ggrepel::geom_text_repel(data=.dt.pos, .aes,
+                                      size = 3, vjust=0, hjust=0,
+                                      segment.size = .2,
                                       segment.color = "#ef8a62",
-                                      box.padding = .1,
-                                      label.padding = .1,
-                                      nudge_x = -1, nudge_y = -1,
                                       max.overlaps = 10)
     }
 
     if(nrow(.dt.neg) > 0) {
         plt <- plt +
             geom_point(data=.dt.neg, pch=21, fill="#67a9cf") +
-            ggrepel::geom_label_repel(data=.dt.neg, .aes,
-                                      size = 3, vjust=0, hjust=0,
-                                      segment.size = .1,
+            ggrepel::geom_text_repel(data=.dt.neg, .aes,
+                                      size = 3, vjust=1, hjust=1,
+                                      segment.size = .2,
                                       segment.color = "#67a9cf",
-                                      box.padding = .1,
-                                      label.padding = .1,
-                                      nudge_x = 1, nudge_y = 1,
                                       max.overlaps = 10)
     }
 
@@ -323,15 +321,16 @@ cat("[**DOWNLOAD:** DEG MS vs HC]("%&% .file %&% ")\n\n")
                      .bulk,
                      fdr.cutoff = .01,
                      qv.cutoff = .2,
-                     n.top = 10)
+                     n.top = 7)
+
 ```
 
 #### Correlation `r num.round(.out$cor)` with p-value = `r num.sci(.out$cor.pv)`
 
-```{r Fig_DEG_comparison_mTreg, fig.width=3, fig.height=5, echo = FALSE, results="asis"}
+```{r Fig_DEG_comparison_mTreg, fig.width=5, fig.height=5, echo = FALSE, results="asis"}
 .file <- fig.dir %&% "/Fig_DEG_comparison_mTreg.pdf"
 print(.out$plt)
-.gg.save(filename = .file, plot = .out$plt, width=3, height=5)
+.gg.save(filename = .file, plot = .out$plt, width=5, height=5)
 ```
 
 #### Memory Tconv genes
@@ -349,12 +348,12 @@ print(.out$plt)
                      .bulk,
                      fdr.cutoff = .01,
                      qv.cutoff = .2,
-                     n.top = 10)
+                     n.top = 5)
 ```
 
 #### Correlation `r num.round(.out$cor)` with p-value = `r num.sci(.out$cor.pv)`
 
-```{r Fig_DEG_comparison_mTconv, fig.width=3, fig.height=5, echo = FALSE, results="asis"}
+```{r Fig_DEG_comparison_mTconv, fig.width=5, fig.height=5, echo = FALSE, results="asis"}
 .file <- fig.dir %&% "/Fig_DEG_comparison_mTconv.pdf"
 print(.out$plt)
 .gg.save(filename = .file, plot = .out$plt, width=3, height=5)
@@ -563,7 +562,6 @@ cat("\n\n\n")
 ### Appendix: PRDM1 short vs. long
 
 ```{r}
-
 .total.cols <- fread(.deg.data$col, col.names = "tag", header=F)
 
 ## 1. Write down PRDM1 short and long as .mtx
@@ -646,7 +644,6 @@ if.needed(.file, {
 .hc.ms.dt[, `Var2` := NULL]
 
 hc.ms.deg <- summarize.deg(.hc.ms.dt)
-
 ```
 
 
