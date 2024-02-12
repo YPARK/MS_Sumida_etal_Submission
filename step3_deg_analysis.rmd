@@ -17,7 +17,6 @@ knitr::opts_chunk$set(warning = FALSE, message = FALSE, fig.path = fig.dir)
 knitr::opts_chunk$set(fig.width=8, fig.height=8)
 options(stringsAsFactors = FALSE)
 FIG.CAP = '**Fig.**'
-
 library(tidyverse)
 library(data.table)
 library(patchwork)
@@ -28,7 +27,7 @@ source("Util-alg.R")
 ```
 
 ```{r read_data_info}
-.data <- fileset.list("result/step2/matrix_final")
+.data <- fileset.list("result/step1/final_matrix")
 ```
 
 ```{r read_hash_data}
@@ -39,13 +38,13 @@ source("Util-alg.R")
 .hash.info <- read.hash(.hash.data)
 ```
 
-# MS vs. HC at the major cell type level
+## 1. MS vs. HC at the major cell type level
 
 ```{r read_annotation}
-annot.dt <-
-    fread("Tab/step2_celltype.txt.gz") %>%
-    left_join(.hash.info) %>%
-    na.omit()
+final.cell.type <- 
+     fread("Tab/step2_cell_type.txt.gz") %>%
+     left_join(.hash.info) %>%
+     na.omit()
 ```
 
 ```{r include = F}
@@ -82,18 +81,19 @@ combine.statistics <- function(.result){
     return(out)
 }
 
-summarize.deg <- function(.dt, tot.cutoff = 5, disease.name = "MS", control.name = "HA") {
+summarize.deg <- function(.dt, tot.cutoff = 10, disease.name = "MS", control.name = "HA") {
 
     ## adjust potential bias
+    .dt[, b := 0]
     .dt[`tot` >= tot.cutoff, b := mean(cfa), by = .(gene, celltype)]
     .dt[, cfa := cfa - b]
 
-    ## .sd <- .dt[`tot` >= tot.cutoff,
-    ##            .(min.sd = sd(cfa) / sqrt(.N)),
-    ##            by = .(gene, celltype)]
-    ## left_join(.sd) %>%
+    .sd <- .dt[`tot` >= tot.cutoff,
+               .(min.sd = sd(cfa) / sqrt(.N)),
+               by = .(gene, celltype)]
 
     .dt <- .dt %>%
+        left_join(.sd) %>%
         filter(`tot` >= tot.cutoff) %>%
         mutate(w = 1/cfa.sd^2) %>%
         as.data.table
@@ -136,34 +136,37 @@ summarize.deg <- function(.dt, tot.cutoff = 5, disease.name = "MS", control.name
 }
 ```
 
+### a. Prepare data to just include cells annotated for their cell types and phenotypes
+
 ```{r prepare_deg_data}
 .mkdir("result/step3/deg/")
 .deg.data <- fileset.list("result/step3/deg/hc_ms")
-
 if.needed(.deg.data, {
     .deg.data <-
         rcpp_mmutil_copy_selected_columns(.data$mtx,
                                           .data$row,
                                           .data$col,
-                                          unique(annot.dt$tag),
+                                          unique(final.cell.type$tag),
                                           "result/step3/deg/hc_ms")
 })
 ```
 
-
 ```{r estimate_deg_statistics}
 .file <- "result/step3/deg/hc_ms.rds"
-
-if.needed(.file, {
-
+if.needed(.file,
+{
+    ## cell types
     .celltype <-
-        annot.dt[, .(tag, celltype)] %>%
+        final.cell.type %>%
+        select(tag, celltype) %>%
         as.data.frame()
-
-    .cell2indv <- annot.dt[, .(tag, subject)] %>%
+    ## cell -> individual
+    .cell2indv <- final.cell.type %>% 
+        left_join(.hash.info) %>%
+        select(tag, subject) %>%
         unique %>%
         as.data.frame()
-
+    ## individual -> disease
     .indv2exp <- .cell2indv %>%
         select(subject) %>%
         mutate(disease = substr(`subject`, 1, 2)) %>%
@@ -171,117 +174,61 @@ if.needed(.file, {
 
     .deg.stat <-
         make.cocoa(.deg.data, .celltype, .cell2indv, .indv2exp,
-                   .rank = 15, .em.iter = 20, .em.tol = 1e-8, .take.ln = TRUE,
-                   knn = 50, impute.by.knn = TRUE, num.threads = 8)
-
-   saveRDS(.deg.stat, .file)
+                   knn = 50, .rank = 50, .take.ln = TRUE,
+                   impute.by.knn = TRUE, num.threads = 16)
+    ## save for computed results
+    saveRDS(.deg.stat, .file)
 })
-
 .deg.stat <- readRDS(.file)
 
-.cts <- unique(annot.dt$celltype)
-.indvs <- unique(annot.dt$subject)
+.cts <- unique(final.cell.type$celltype)
+.indvs <- unique(final.cell.type$subject)
 
 .hc.ms.dt <-
     list(tot = sort.col(.deg.stat$sum, .cts, .indvs),
          cfa = sort.col(.deg.stat$resid.ln.mu, .cts, .indvs),
          cfa.sd = sort.col(.deg.stat$resid.ln.mu.sd, .cts, .indvs)) %>%
-    combine.statistics()
+    combine.statistics() %>%
+    na.omit() %>%
+    as.data.table() %>% 
+    (function(x) {
+        x[, c("sample", "celltype") := tstrsplit(as.character(Var2), split="_")];
+        x[, disease := substr(`sample`, 1, 2)];
+        x[, gene := as.character(Var1)];
+        x
+    }) %>% 
+    dplyr::select(-Var1, -Var2) %>% 
+    as.data.table()
 
-.hc.ms.dt[, c("subject","celltype") := tstrsplit(`Var2`,split="_")]
-.hc.ms.dt[, disease := substr(`subject`,1,2)]
-.hc.ms.dt[, gene := `Var1`]
-.hc.ms.dt[, `Var1` := NULL]
-.hc.ms.dt[, `Var2` := NULL]
-
-hc.ms.deg <- summarize.deg(.hc.ms.dt)
+hc.ms.deg <-
+    summarize.deg(.hc.ms.dt, tot.cutoff = 10) %>%
+    parse.gene()
 ```
 
-### Comparison with the bulk DEG results
-
-```{r include = F}
-plot.bulk.sc <- function(.sc, .bulk,
-                         fdr.cutoff = .01,
-                         tot.cutoff = 500,
-                         qv.cutoff = .2,
-                         n.top = 7) {
-
-    .dt <-
-        left_join(.bulk, .sc) %>%
-        filter(str_starts(`ensembl_gene_id`, "ENSG")) %>% 
-        mutate(sc.z = z) %>% 
-        na.omit %>%
-        arrange(abs(sc.z)) %>%
-        as.data.table
-
-    .dt.show <-
-        .dt[`fdr` < `fdr.cutoff` &
-            `bulk.qv` < qv.cutoff &
-            `tot` > tot.cutoff] %>%
-        group_by(sign(sc.z)) %>%
-        top_n(n.top, -log10(pv)) %>%
-        ungroup() %>%
-        as.data.table
-
-    rr <- cor(.dt$z, .dt$bulk.t, method="spearman")
-    r.pv <- cor.test(.dt$z, .dt$bulk.t, method="spearman")$p.value
-
-    .dt.pos <- .dt.show[z > 0]
-    .dt.neg <- .dt.show[z < 0]
-
-    .scale.size <-
-        scale_size_continuous(range=c(1, 2),
-                              labels = function(x) num.sci(10^(-x)),
-                              guide = "none")
-
-    y.lim <- range(c(.dt.neg$sc.z, .dt.pos$sc.z))
-
-    plt <-
-        ggplot(.dt, aes(x = bulk.t, y = sc.z)) +
-        theme_classic() +
-        xlab("bulk RNA-seq DEG effect") +
-        ylab("scRNA-seq DEG effect") +
-        scale_y_continuous(limits = y.lim) +
-        ggrastr::rasterise(
-                     geom_point(aes(size = -log10(pmax(pv, bulk.pv))),
-                                stroke=.2, pch=21, colour="gray40"),
-                     dpi=300) +
-        .scale.size +
-        geom_vline(xintercept = 0, linewidth = .1) +
-        geom_hline(yintercept = 0, linewidth = .1) +
-        geom_smooth(aes(bulk.t, sc.z), method="lm", se=FALSE, colour="red", lty=1, formula = y ~ x - 1, linewidth=.5)
-
-    .aes <- aes(label = hgnc_symbol %&% "\n(" %&% num.sci(bulk.pv) %&% ")")
-
-    if(nrow(.dt.pos) > 0) {
-        plt <- plt +
-            geom_point(data=.dt.pos, pch=21, fill="#ef8a62") +
-            ggrepel::geom_text_repel(data=.dt.pos, .aes,
-                                      size = 3, vjust=0, hjust=0,
-                                      segment.size = .2,
-                                      segment.color = "#ef8a62",
-                                      max.overlaps = 10)
-    }
-
-    if(nrow(.dt.neg) > 0) {
-        plt <- plt +
-            geom_point(data=.dt.neg, pch=21, fill="#67a9cf") +
-            ggrepel::geom_text_repel(data=.dt.neg, .aes,
-                                      size = 3, vjust=1, hjust=1,
-                                      segment.size = .2,
-                                      segment.color = "#67a9cf",
-                                      max.overlaps = 10)
-    }
-
-    plt <- plt +
-        ggtitle("Cor=" %&%
-                num.round(rr) %&%
-                ", p=" %&% num.sci(r.pv) %&%
-                ", N=" %&% num.int(nrow(.dt)))
-
-    list(plt=plt, cor = rr, cor.pv = r.pv)
-}
+```{r Fig_DEG_hist, fig.width=5, fig.height=3}
+plt <-
+    .gg.plot(hc.ms.deg, aes(pv, fill=`celltype`)) +
+    geom_histogram(bins=20, linewidth=.1, color="black") +
+    xlab("p-value") +
+    scale_fill_brewer(palette = "Paired")
+print(plt)
 ```
+
+```{r results="asis", echo = F}
+.file <- fig.dir %&% "/Fig_DEG_hist.pdf"
+#.gg.save(filename = .file, plot = plt, width=5, height=3)
+```
+
+```{r ms_vs_hc_results, results="asis", echo = FALSE}
+.mkdir("Tab")
+.file <- "Tab/DEG_MS_vs_HC.txt.gz"
+if.needed(.file, {
+    fwrite(hc.ms.deg, .file, sep="\t")
+})
+cat("[**DOWNLOAD:** DEG MS vs HC]("%&% .file %&% ")\n\n")
+```
+
+### b. Comparison with the bulk DEG results
 
 ```{r read_bulk_deg_results}
 read.bulk <- function(.file) {
@@ -298,74 +245,154 @@ bulk.mTreg.dt <- read.bulk(.file)
 bulk.mTconv.dt <- read.bulk(.file)
 ```
 
-```{r ms_vs_hc_results, results="asis", echo = FALSE}
-.mkdir("Tab")
-.file <- "Tab/DEG_MS_vs_HC.txt.gz"
 
-if.needed(.file, {
-    fwrite(hc.ms.deg, .file, sep="\t")
-})
-cat("[**DOWNLOAD:** DEG MS vs HC]("%&% .file %&% ")\n\n")
+```{r include = F}
+plot.bulk.sc <- function(.sc, .bulk,
+                         .key.genes = c("PRDM1","SGK1"),
+                         fwer.cutoff = .05,
+                         tot.cutoff = 500,
+                         qv.cutoff = .2,
+                         n.top = 7) {
+
+    .sc.uniq <- .sc[order(pv), tail(.SD, 1), by = .(hgnc_symbol)]
+
+    .dt <-
+        left_join(.sc.uniq, .bulk) %>%
+        filter(str_starts(`ensembl_gene_id`, "ENSG")) %>%
+        na.omit() %>% 
+        mutate(sc.z = z) %>% 
+        na.omit %>%
+        arrange(abs(sc.z)) %>%
+        as.data.table
+
+    .show <-
+        .dt[(`fwer` < `fwer.cutoff` &
+             `bulk.qv` < qv.cutoff &
+             `tot` > tot.cutoff)] %>%
+        group_by(sign(sc.z)) %>%
+        top_n(n.top, -log10(pv)) %>%
+        select(hgnc_symbol) %>%
+        unlist()
+
+    .dt.show <- .dt[hgnc_symbol %in% c(.show, .key.genes)]
+
+    .dt.cor <- .dt[abs(bulk.t) > 2]
+    rr <- cor(.dt.cor$z, .dt.cor$bulk.t, method="spearman")
+    r.pv <- cor.test(.dt$z, .dt$bulk.t, method="spearman")$p.value
+
+    .dt.pos <- .dt.show[z > 0]
+    .dt.neg <- .dt.show[z < 0]
+
+    y.lim <- range(c(.dt.neg$sc.z, .dt.pos$sc.z))
+
+    plt <-
+        ggplot(.dt, aes(x = bulk.t, y = sc.z)) +
+        theme_classic() +
+        xlab("bulk RNA-seq DEG effect") +
+        ylab("scRNA-seq DEG effect") +
+        scale_y_continuous(limits = y.lim) +
+        ggrastr::rasterise(
+                     geom_point(aes(size = -log10(pmax(pv, bulk.pv))),
+                                stroke=0, pch=19, colour="gray40",
+                                size=1, alpha = .5),
+                     dpi=300) +
+        geom_vline(xintercept = 0, linewidth = .1) +
+        geom_hline(yintercept = 0, linewidth = .1) +
+        geom_smooth(aes(bulk.t, sc.z), method="lm", se=FALSE, colour="red", lty=1, formula = y ~ x, linewidth=.5)
+
+    .aes <- aes(label = hgnc_symbol %&% "\n(" %&% num.sci(bulk.pv) %&% ")\n" %&% "(" %&% num.sci(fwer) %&% ")")
+
+    if(nrow(.dt.pos) > 0) {
+        plt <- plt +
+            geom_point(data=.dt.pos, pch=21, fill="#ef8a62") +
+            ggrepel::geom_text_repel(data=.dt.pos, .aes,
+                                     size = 2, vjust=0, hjust=0,
+                                     min.segment.length = .05,
+                                     segment.size = .5,
+                                     segment.color = "#ef8a62",
+                                     max.overlaps = 100)
+    }
+
+    if(nrow(.dt.neg) > 0) {
+        plt <- plt +
+            geom_point(data=.dt.neg, pch=21, fill="#67a9cf") +
+            ggrepel::geom_text_repel(data=.dt.neg, .aes,
+                                     size = 2, vjust=1, hjust=1,
+                                     min.segment.length = .05,
+                                     segment.size = .5,
+                                     segment.color = "#67a9cf",
+                                     max.overlaps = 100)
+    }
+
+    plt <- plt +
+        ggtitle("Cor=" %&%
+                num.round(rr) %&%
+                " (bulk |t| > 2), p=" %&% num.sci(r.pv) %&%
+                ", N=" %&% num.int(nrow(.dt)))
+
+    list(plt=plt, cor = rr, cor.pv = r.pv)
+}
 ```
 
-## 1. Memory Treg genes
+#### Memory Treg genes
 
-```{r}
-.sc <- hc.ms.deg[celltype == "mTreg" &
-                 sign(ADD) == sign(z) &
-                 sign(ADC) == sign(z),]
-
-.sc[, c("ensembl_gene_id","hgnc_symbol") := tstrsplit(`gene`, split="_")]
+```{r include = F}
+.sc <- hc.ms.deg[celltype == "mTreg"]
 
 .bulk <- bulk.mTreg.dt
 
 .out <- plot.bulk.sc(.sc,
                      .bulk,
-                     fdr.cutoff = .01,
+                     .key.genes = c("PRDM1","SGK1"),
+                     fwer.cutoff = .01,
                      qv.cutoff = .2,
-                     n.top = 7)
-
+                     n.top = 5)
 ```
 
-### Correlation `r num.round(.out$cor)` with p-value = `r num.sci(.out$cor.pv)`
+##### Correlation `r num.round(.out$cor)` with p-value = `r num.sci(.out$cor.pv)`
 
 ```{r Fig_DEG_comparison_mTreg, fig.width=5, fig.height=5, echo = FALSE, results="asis"}
-.file <- fig.dir %&% "/Fig_DEG_comparison_mTreg.pdf"
 print(.out$plt)
-.gg.save(filename = .file, plot = .out$plt, width=5, height=5)
+.file <- fig.dir %&% "/Fig_DEG_comparison_mTreg.pdf"
+#.gg.save(filename = .file, plot = .out$plt, width=5, height=5)
 ```
 
-## 2. Memory Tconv genes
+* Here, we computed correlation between the bulk and scRNA-seq results after selecting on the DEGs marginally significant in the bulk analysis ($|t| > 2$).
+
+* Two numbers below the marked genes: first, we show p-value of the bulk analysis; second, we show Bonferroni-adjusted p-values of the scRNA-seq analysis.
+
+#### Memory Tconv genes
 
 ```{r}
-.sc <- hc.ms.deg[celltype == "mTconv" &
-                 sign(ADD) == sign(z) &
-                 sign(ADC) == sign(z),]
-
-.sc[, c("ensembl_gene_id","hgnc_symbol") := tstrsplit(`gene`, split="_")]
+.sc <- hc.ms.deg[celltype == "mTconv"]
 
 .bulk <- bulk.mTconv.dt
 
 .out <- plot.bulk.sc(.sc,
                      .bulk,
-                     fdr.cutoff = .01,
+                     .key.genes = c("PRDM1","SGK1"),
+                     fwer.cutoff = .01,
                      qv.cutoff = .2,
                      n.top = 5)
 ```
 
-### Correlation `r num.round(.out$cor)` with p-value = `r num.sci(.out$cor.pv)`
+#### Correlation `r num.round(.out$cor)` with p-value = `r num.sci(.out$cor.pv)`
 
 ```{r Fig_DEG_comparison_mTconv, fig.width=5, fig.height=5, echo = FALSE, results="asis"}
 .file <- fig.dir %&% "/Fig_DEG_comparison_mTconv.pdf"
 print(.out$plt)
-.gg.save(filename = .file, plot = .out$plt, width=3, height=5)
+#.gg.save(filename = .file, plot = .out$plt, width=5, height=5)
 ```
 
-### Found `r num.int(nrow(unique(hc.ms.deg[fwer < .01, .(gene)])))` unique genes strongly perturbed by MS with FWER 1%
+* Here, we computed correlation between the bulk and scRNA-seq results after selecting on the DEGs marginally significant in the bulk analysis ($|t| > 2$).
 
-* Up-regulated: `r num.int(nrow(unique(hc.ms.deg[fwer < .01 & z > 0, .(gene)])))`
+* Two numbers below the marked genes: first, we show p-value of the bulk analysis; second, we show Bonferroni-adjusted p-values of the scRNA-seq analysis.
 
-* Down-regulated:  `r num.int(nrow(unique(hc.ms.deg[fwer < .01 & z < 0, .(gene)])))`
+### Found `r num.int(nrow(unique(hc.ms.deg[fwer < .01, .(gene)])))` unique genes strongly perturbed by MS with FWER 5%
+
+* Up-regulated: `r num.int(nrow(unique(hc.ms.deg[fwer < .05 & z > 0, .(gene)])))`
+
+* Down-regulated:  `r num.int(nrow(unique(hc.ms.deg[fwer < .05 & z < 0, .(gene)])))`
 
 * Total pairs of genes and cell types: `r num.int(nrow(hc.ms.deg))`
 
@@ -386,7 +413,7 @@ count.deg <- function(.dt, fwer.cutoff = .01) {
 }
 ```
 
-```{r Fig_DEG_count, fig.width=2, fig.height=2, echo = FALSE, results="asis"}
+```{r Fig_DEG_count, fig.width=2, fig.height=2}
 .df <- count.deg(hc.ms.deg)
 
 plt <-
@@ -399,11 +426,14 @@ plt <-
     scale_fill_manual(values = c("#ef8a62","#67a9cf"))
 
 print(plt)
-.file <- fig.dir %&% "/Fig_DEG_count.pdf"
-.gg.save(filename = .file, plot = plt, width=2, height=2)
 ```
 
-## 3. Show genes with FWER $< 10^{-2}$ overlapping with the bulk DEGs
+```{r results="asis", echo = F}
+.file <- fig.dir %&% "/Fig_DEG_count.pdf"
+#.gg.save(filename = .file, plot = plt, width=2, height=2)
+```
+
+## 2. Show genes with FWER $< 10^{-2}$ overlapping with the bulk DEGs
 
 ```{r include = F}
 show.each.gene <- function(g, .data, .stat, .cutoff = 2) {
@@ -526,21 +556,41 @@ hc.ms.deg[, c("ensembl_gene_id", "hgnc_symbol") := tstrsplit(`gene`, split="_")]
     as.character
 ```
 
-```{r Fig_DEG_example, results="asis", echo = FALSE}
-for(g in .genes.show){
-    .file <- fig.dir %&% "/Fig_DEG_example_" %&% g %&% ".pdf"
-    if.needed(.file, {
-        plt <- show.each.gene(g, .hc.ms.dt, hc.ms.deg)
-        .gg.save(filename = .file, cat.link = FALSE, plot = plt, width=5, height=3)
-    })
-    cat("[" %&% g %&% "](" %&% .file %&% ") ")
+```{r include = F}
+library(kableExtra)
+```
+
+```{r Fig_DEG_example, include=F}
+.mkdir(fig.dir %&% "/example/")
+for(g in unique(.genes.show)){
+    .file <- fig.dir %&% "example/Fig_DEG_example_" %&% g %&% ".pdf"
+   if.needed(.file, {
+       plt <- show.each.gene(g, .hc.ms.dt, hc.ms.deg)
+       ggsave(filename = .file, plot = plt, width=5, height=3, useDingbats=F, units="in")
+   })
 }
+```
+
+```{r Tab_DEG_FWER5, results="asis", echo = FALSE}
+data.table(gene = .genes.show) %>%
+    left_join(hc.ms.deg) %>%
+    filter(fwer < .05) %>% 
+    mutate(is.G=factor(str_starts(`gene`,"ENSG"), c(T,F), c("Gene","Ab"))) %>%
+    mutate(.file=fig.dir %&% "/example/Fig_DEG_example_" %&% gene %&% ".pdf") %>%
+    mutate(.link = "[PDF](" %&% .file %&% ") ") %>% 
+    select(celltype, hgnc_symbol, z, pv, fwer, .link) %>% 
+    mutate(z = num.round(z), pv = num.sci(pv), fwer = num.sci(fwer)) %>% 
+    arrange(celltype, pv) %>%
+    kbl() %>% 
+    kable_paper("striped", full_width=F, html_font = "Helvetica") %>%
+    column_spec(1, bold = T) %>%
+    collapse_rows(columns=1, valign = "top")
 cat("\n\n\n")
 ```
 
 ## 4. Additional genes/proteins
 
-```{r}
+```{r include = F}
 .add <- c("CD279","PDCD1","LAG3","CD223","HAVCR2","TIM3","CD366","TOX","TOX2")
 
 additional.genes <-
@@ -549,118 +599,31 @@ additional.genes <-
     unlist(use.names=F)
 ```
 
-```{r Fig_DEG_example2, results="asis", echo = FALSE}
+```{r Fig_DEG_example2, include = FALSE}
+.mkdir(fig.dir %&% "/example/")
 for(g in additional.genes){
-    .file <- fig.dir %&% "/Fig_DEG_example_" %&% g %&% ".pdf"
+    .file <- fig.dir %&% "/example/Fig_DEG_example_" %&% g %&% ".pdf"
     if.needed(.file, {
         plt <- show.each.gene(g, .hc.ms.dt, hc.ms.deg)
-        .gg.save(filename = .file, cat.link = FALSE, plot = plt, width=5, height=3)
+        ggsave(filename = .file, plot = plt, width=5, height=3, useDingbats=F, units="in")
     })
     cat("[" %&% g %&% "](" %&% .file %&% ") ")
 }
+```
+
+
+```{r Tab_DEG_OTHER_GENES, results="asis", echo = FALSE}
+data.table(gene = additional.genes) %>%
+    left_join(hc.ms.deg) %>%
+    mutate(is.G=factor(str_starts(`gene`,"ENSG"), c(T,F), c("Gene","Ab"))) %>%
+    mutate(.file=fig.dir %&% "/example/Fig_DEG_example_" %&% gene %&% ".pdf") %>%
+    mutate(.link = "[PDF](" %&% .file %&% ") ") %>% 
+    select(celltype, hgnc_symbol, z, pv, fwer, .link) %>% 
+    mutate(z = num.round(z), pv = num.sci(pv), fwer = num.sci(fwer)) %>% 
+    arrange(celltype, pv) %>%
+    kbl() %>% 
+    kable_paper("striped", full_width=F, html_font = "Helvetica") %>%
+    column_spec(1, bold = T) %>%
+    collapse_rows(columns=1, valign = "top")
 cat("\n\n\n")
 ```
-
-## 5. Appendix: PRDM1 short vs. long
-
-```{r}
-.total.cols <- fread(.deg.data$col, col.names = "tag", header=F)
-
-## 1. Write down PRDM1 short and long as .mtx
-.hdr <- "result/step3/deg/prdm1_hc_ms"
-
-if.needed(fileset.list(.hdr), {
-
-    .dt <- fread("data/PRDM1/PRDM1_SL.csv.gz")
-    .dt[, tag := barcode %&% "-1" %&% "_" %&% `batch`]
-
-    .out <- .dt[(PRDM1_short + PRDM1_long > 0) &
-                `tag` %in% .total.cols$tag,
-                .(tag, PRDM1_short, PRDM1_long)]
-
-
-    .mat <- .out[, .(PRDM1_short, PRDM1_long)] %>%
-        as.matrix() %>%
-        t() %>% 
-        Matrix::Matrix(sparse=TRUE)
-
-    mmutilR::write.sparse(.mat,
-                          c("PRDM1_short", "PRDM1_long"),
-                          .out$tag,
-                          .hdr)
-})
-
-
-prdm1.data <- fileset.list(.hdr)
-
-.file <- "result/step3/deg/prdm1_hc_ms.rds"
-
-if.needed(.file, {
-
-    .pca <- rcpp_mmutil_svd(mtx_file = .deg.data$mtx,
-                            RANK = 15,
-                            TAKE_LN = T)
-
-    .prdm1.cols <- fread(prdm1.data$col, col.names = "tag", header=F)
-
-    V <- .pca$V[match(.prdm1.cols$tag, .total.cols$tag), , drop = F]
-
-    .prdm1.cols[, c("barcode", "batch") := tstrsplit(`tag`, split="_")]
-    .prdm1.cols[, barcode := gsub(pattern="-1", replacement = "", `barcode`)]
-    .prdm1.cols[, batch := as.integer(batch)]
-
-    .matched <- .prdm1.cols %>%
-        left_join(annot.dt) %>% 
-        left_join(.hash.info)
-
-    .stat <- rcpp_mmutil_aggregate(mtx_file = prdm1.data$mtx, 
-                                   row_file = prdm1.data$row,
-                                   col_file = prdm1.data$col, 
-                                   r_cols = .matched$tag,
-                                   r_indv = .matched$subject,
-                                   r_annot = .matched$celltype,
-                                   r_lab_name = c("mTreg","mTconv","nTreg","nTconv"),
-                                   r_trt = .matched$disease,
-                                   r_V = V, knn = 50,
-                                   IMPUTE_BY_KNN = T,
-                                   NUM_THREADS = 16)
-
-    saveRDS(.stat, .file)
-})
-
-.deg.stat <- readRDS(.file)
-
-.cts <- unique(annot.dt$celltype)
-.indvs <- unique(annot.dt$subject)
-
-.hc.ms.dt <-
-    list(tot = sort.col(.deg.stat$sum, .cts, .indvs),
-         cfa = sort.col(.deg.stat$resid.ln.mu, .cts, .indvs),
-         cfa.sd = sort.col(.deg.stat$resid.ln.mu.sd, .cts, .indvs)) %>%
-    combine.statistics()
-
-.hc.ms.dt[, c("subject","celltype") := tstrsplit(`Var2`,split="_")]
-.hc.ms.dt[, disease := substr(`subject`,1,2)]
-.hc.ms.dt[, gene := `Var1`]
-.hc.ms.dt[, `Var1` := NULL]
-.hc.ms.dt[, `Var2` := NULL]
-
-hc.ms.deg <- summarize.deg(.hc.ms.dt)
-```
-
-
-```{r Fig_SL_DEG_PRDM1_long, results="asis", echo=F, fig.width=5, fig.height=5}
-.file <- fig.dir %&% "/Fig_SL_DEG_PRDM1_long.pdf"
-plt <- show.each.gene("PRDM1_long", .hc.ms.dt, hc.ms.deg)
-print(plt)
-.gg.save(filename = .file, cat.link = T, plot=plt, width=5, height=5)
-```
-
-
-```{r Fig_SL_DEG_PRDM1_short, results="asis", echo=F, fig.width=5, fig.height=5}
-.file <- fig.dir %&% "/Fig_SL_DEG_PRDM1_short.pdf"
-plt <- show.each.gene("PRDM1_short", .hc.ms.dt, hc.ms.deg)
-print(plt)
-.gg.save(filename = .file, cat.link = T, plot=plt, width=5, height=5)
-```
-

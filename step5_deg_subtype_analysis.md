@@ -1,6 +1,6 @@
 ---
 title: "Step 5: differential Expression analysis for sub clusters"
-date: "2024-02-08"
+date: "2024-02-11"
 author: Yongjin Park
 bibliography: "MS_Ref.bib"
 output:
@@ -9,6 +9,8 @@ output:
     keep_md: true
     self_contained: true
 ---
+
+
 
 
 
@@ -33,7 +35,7 @@ annot.dt <-
 
 
 ```r
-.data <- fileset.list("result/step1/matrix_final")
+.data <- fileset.list("result/step1/final_matrix")
 .mkdir("result/step5/deg/")
 .deg.data <- fileset.list("result/step5/deg/mtconv_hc_ms")
 
@@ -65,41 +67,46 @@ if.needed(.file, {
 
     .deg.stat <-
         make.cocoa(.deg.data, .membership, .cell2indv, .indv2exp,
-                   .rank = 10, .em.iter = 20, .em.tol = 1e-8, .take.ln = TRUE,
-                   knn = 30, impute.by.knn = TRUE, num.threads = 8)
+                   knn = 50, .rank = 50, .take.ln = TRUE,
+                   impute.by.knn = TRUE, num.threads = 16)
 
    saveRDS(.deg.stat, .file)
 })
-
 .deg.stat <- readRDS(.file)
 
-.mems <- unique(annot.dt$membership)
+.cts <- unique(annot.dt$membership)
 .indvs <- unique(annot.dt$subject)
 
 .hc.ms.dt <-
-    list(tot = sort.col(.deg.stat$sum, .mems, .indvs),
-         cfa = sort.col(.deg.stat$resid.ln.mu, .mems, .indvs),
-         cfa.sd = sort.col(.deg.stat$resid.ln.mu.sd, .mems, .indvs)) %>%
-    combine.statistics()
+    list(tot = sort.col(.deg.stat$sum, .cts, .indvs),
+         cfa = sort.col(.deg.stat$resid.ln.mu, .cts, .indvs),
+         cfa.sd = sort.col(.deg.stat$resid.ln.mu.sd, .cts, .indvs)) %>%
+    combine.statistics() %>%
+    na.omit() %>%
+    as.data.table() %>% 
+    (function(x) {
+        x[, c("sample", "membership") := tstrsplit(as.character(Var2), split="_")];
+        x[, disease := substr(`sample`, 1, 2)];
+        x[, gene := as.character(Var1)];
+        x
+    }) %>% 
+    dplyr::select(-Var1, -Var2) %>% 
+    as.data.table()
 
-.hc.ms.dt[, c("subject","membership") := tstrsplit(`Var2`,split="_")]
-.hc.ms.dt[, disease := substr(`subject`,1,2)]
-.hc.ms.dt[, gene := `Var1`]
-.hc.ms.dt[, `Var1` := NULL]
-.hc.ms.dt[, `Var2` := NULL]
-
-hc.ms.deg <- summarize.deg(.hc.ms.dt) %>% parse.gene()
+hc.ms.deg <-
+    summarize.deg(.hc.ms.dt, tot.cutoff = 10) %>%
+    parse.gene()
 ```
 
 [**DOWNLOAD:** mTconv DEG MS vs HC](Tab/DEG_mtconv_MS_vs_HC.txt.gz)
 
-### Found 755 unique genes strongly perturbed by MS with FDR 5%
+### Found 136 unique genes strongly perturbed by MS with FDR 5%
 
-* Up-regulated: 499
+* Up-regulated: 88
 
-* Down-regulated:  288
+* Down-regulated:  52
 
-* Total pairs of genes and clusters: 65,226
+* Total pairs of genes and clusters: 35,651
 
 
 ```r
@@ -120,6 +127,8 @@ count.deg <- function(.dt, fdr.cutoff = .05) {
 ```
 
 ![](Fig/STEP5/Fig_mTconv_DEG_count-1.png)<!-- -->
+
+[PDF](Fig/STEP5//Fig_mTconv_DEG_count.pdf)
 
 #### Examples
 
@@ -161,7 +170,431 @@ hc.ms.deg[, c("ensembl_gene_id", "hgnc_symbol") := tstrsplit(`gene`, split="_")]
     as.character
 ```
 
-[CD226_CD226](Fig/STEP5//Fig_mTconv_DEG_example_CD226_CD226.pdf) [CD27_CD27](Fig/STEP5//Fig_mTconv_DEG_example_CD27_CD27.pdf) [CD58_CD58](Fig/STEP5//Fig_mTconv_DEG_example_CD58_CD58.pdf) [ENSG00000009790_TRAF3IP3](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000009790_TRAF3IP3.pdf) [ENSG00000034677_RNF19A](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000034677_RNF19A.pdf) [ENSG00000038274_MAT2B](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000038274_MAT2B.pdf) [ENSG00000057657_PRDM1](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000057657_PRDM1.pdf) [ENSG00000058668_ATP2B4](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000058668_ATP2B4.pdf) [ENSG00000065978_YBX1](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000065978_YBX1.pdf) [ENSG00000070756_PABPC1](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000070756_PABPC1.pdf) [ENSG00000071073_MGAT4A](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000071073_MGAT4A.pdf) [ENSG00000073849_ST6GAL1](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000073849_ST6GAL1.pdf) [ENSG00000076043_REXO2](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000076043_REXO2.pdf) [ENSG00000077420_APBB1IP](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000077420_APBB1IP.pdf) [ENSG00000081237_PTPRC](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000081237_PTPRC.pdf) [ENSG00000083799_CYLD](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000083799_CYLD.pdf) [ENSG00000085491_SLC25A24](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000085491_SLC25A24.pdf) [ENSG00000099622_CIRBP](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000099622_CIRBP.pdf) [ENSG00000099783_HNRNPM](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000099783_HNRNPM.pdf) [ENSG00000099985_OSM](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000099985_OSM.pdf) [ENSG00000100100_PIK3IP1](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000100100_PIK3IP1.pdf) [ENSG00000100129_EIF3L](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000100129_EIF3L.pdf) [ENSG00000100219_XBP1](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000100219_XBP1.pdf) [ENSG00000100225_FBXO7](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000100225_FBXO7.pdf) [ENSG00000100316_RPL3](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000100316_RPL3.pdf) [ENSG00000100644_HIF1A](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000100644_HIF1A.pdf) [ENSG00000100664_EIF5](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000100664_EIF5.pdf) [ENSG00000101166_PRELID3B](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000101166_PRELID3B.pdf) [ENSG00000101608_MYL12A](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000101608_MYL12A.pdf) [ENSG00000101654_RNMT](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000101654_RNMT.pdf) [ENSG00000102007_PLP2](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000102007_PLP2.pdf) [ENSG00000102245_CD40LG](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000102245_CD40LG.pdf) [ENSG00000102409_BEX4](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000102409_BEX4.pdf) [ENSG00000102871_TRADD](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000102871_TRADD.pdf) [ENSG00000104529_EEF1D](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000104529_EEF1D.pdf) [ENSG00000104660_LEPROTL1](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000104660_LEPROTL1.pdf) [ENSG00000106460_TMEM106B](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000106460_TMEM106B.pdf) [ENSG00000108298_RPL19](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000108298_RPL19.pdf) [ENSG00000109861_CTSC](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000109861_CTSC.pdf) [ENSG00000109971_HSPA8](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000109971_HSPA8.pdf) [ENSG00000110852_CLEC2B](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000110852_CLEC2B.pdf) [ENSG00000112110_MRPL18](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000112110_MRPL18.pdf) [ENSG00000113407_TARS](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000113407_TARS.pdf) [ENSG00000114737_CISH](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000114737_CISH.pdf) [ENSG00000115687_PASK](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000115687_PASK.pdf) [ENSG00000115758_ODC1](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000115758_ODC1.pdf) [ENSG00000116717_GADD45A](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000116717_GADD45A.pdf) [ENSG00000116791_CRYZ](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000116791_CRYZ.pdf) [ENSG00000116906_GNPAT](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000116906_GNPAT.pdf) [ENSG00000117318_ID3](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000117318_ID3.pdf) [ENSG00000118515_SGK1](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000118515_SGK1.pdf) [ENSG00000119718_EIF2B2](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000119718_EIF2B2.pdf) [ENSG00000120656_TAF12](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000120656_TAF12.pdf) [ENSG00000120875_DUSP4](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000120875_DUSP4.pdf) [ENSG00000120913_PDLIM2](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000120913_PDLIM2.pdf) [ENSG00000121067_SPOP](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000121067_SPOP.pdf) [ENSG00000121895_TMEM156](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000121895_TMEM156.pdf) [ENSG00000122026_RPL21](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000122026_RPL21.pdf) [ENSG00000122188_LAX1](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000122188_LAX1.pdf) [ENSG00000122406_RPL5](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000122406_RPL5.pdf) [ENSG00000123609_NMI](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000123609_NMI.pdf) [ENSG00000124177_CHD6](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000124177_CHD6.pdf) [ENSG00000125148_MT2A](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000125148_MT2A.pdf) [ENSG00000128340_RAC2](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000128340_RAC2.pdf) [ENSG00000129315_CCNT1](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000129315_CCNT1.pdf) [ENSG00000131143_COX4I1](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000131143_COX4I1.pdf) [ENSG00000132406_TMEM128](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000132406_TMEM128.pdf) [ENSG00000132475_H3F3B](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000132475_H3F3B.pdf) [ENSG00000132965_ALOX5AP](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000132965_ALOX5AP.pdf) [ENSG00000133561_GIMAP6](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000133561_GIMAP6.pdf) [ENSG00000133574_GIMAP4](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000133574_GIMAP4.pdf) [ENSG00000133872_SARAF](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000133872_SARAF.pdf) [ENSG00000134308_YWHAQ](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000134308_YWHAQ.pdf) [ENSG00000134954_ETS1](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000134954_ETS1.pdf) [ENSG00000135046_ANXA1](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000135046_ANXA1.pdf) [ENSG00000135486_HNRNPA1](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000135486_HNRNPA1.pdf) [ENSG00000136732_GYPC](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000136732_GYPC.pdf) [ENSG00000136819_C9orf78](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000136819_C9orf78.pdf) [ENSG00000136827_TOR1A](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000136827_TOR1A.pdf) [ENSG00000137154_RPS6](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000137154_RPS6.pdf) [ENSG00000137876_RSL24D1](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000137876_RSL24D1.pdf) [ENSG00000138166_DUSP5](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000138166_DUSP5.pdf) [ENSG00000138433_CIR1](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000138433_CIR1.pdf) [ENSG00000138757_G3BP2](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000138757_G3BP2.pdf) [ENSG00000139187_KLRG1](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000139187_KLRG1.pdf) [ENSG00000139211_AMIGO2](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000139211_AMIGO2.pdf) [ENSG00000140988_RPS2](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000140988_RPS2.pdf) [ENSG00000143183_TMCO1](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000143183_TMCO1.pdf) [ENSG00000143333_RGS16](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000143333_RGS16.pdf) [ENSG00000143570_SLC39A1](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000143570_SLC39A1.pdf) [ENSG00000143772_ITPKB](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000143772_ITPKB.pdf) [ENSG00000143891_GALM](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000143891_GALM.pdf) [ENSG00000144746_ARL6IP5](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000144746_ARL6IP5.pdf) [ENSG00000145741_BTF3](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000145741_BTF3.pdf) [ENSG00000145779_TNFAIP8](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000145779_TNFAIP8.pdf) [ENSG00000145860_RNF145](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000145860_RNF145.pdf) [ENSG00000146457_WTAP](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000146457_WTAP.pdf) [ENSG00000147403_RPL10](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000147403_RPL10.pdf) [ENSG00000147604_RPL7](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000147604_RPL7.pdf) [ENSG00000148154_UGCG](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000148154_UGCG.pdf) [ENSG00000148303_RPL7A](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000148303_RPL7A.pdf) [ENSG00000148634_HERC4](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000148634_HERC4.pdf) [ENSG00000148834_GSTO1](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000148834_GSTO1.pdf) [ENSG00000149273_RPS3](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000149273_RPS3.pdf) [ENSG00000150637_CD226](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000150637_CD226.pdf) [ENSG00000152518_ZFP36L2](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000152518_ZFP36L2.pdf) [ENSG00000156508_EEF1A1](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000156508_EEF1A1.pdf) [ENSG00000160593_JAML](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000160593_JAML.pdf) [ENSG00000161016_RPL8](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000161016_RPL8.pdf) [ENSG00000162517_PEF1](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000162517_PEF1.pdf) [ENSG00000162704_ARPC5](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000162704_ARPC5.pdf) [ENSG00000162777_DENND2D](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000162777_DENND2D.pdf) [ENSG00000163191_S100A11](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000163191_S100A11.pdf) [ENSG00000163682_RPL9](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000163682_RPL9.pdf) [ENSG00000163939_PBRM1](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000163939_PBRM1.pdf) [ENSG00000164024_METAP1](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000164024_METAP1.pdf) [ENSG00000164104_HMGB2](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000164104_HMGB2.pdf) [ENSG00000164442_CITED2](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000164442_CITED2.pdf) [ENSG00000166913_YWHAB](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000166913_YWHAB.pdf) [ENSG00000167658_EEF2](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000167658_EEF2.pdf) [ENSG00000167996_FTH1](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000167996_FTH1.pdf) [ENSG00000168028_RPSA](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000168028_RPSA.pdf) [ENSG00000168209_DDIT4](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000168209_DDIT4.pdf) [ENSG00000168300_PCMTD1](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000168300_PCMTD1.pdf) [ENSG00000168421_RHOH](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000168421_RHOH.pdf) [ENSG00000168685_IL7R](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000168685_IL7R.pdf) [ENSG00000169100_SLC25A6](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000169100_SLC25A6.pdf) [ENSG00000169239_CA5B](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000169239_CA5B.pdf) [ENSG00000170430_MGMT](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000170430_MGMT.pdf) [ENSG00000171566_PLRG1](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000171566_PLRG1.pdf) [ENSG00000171792_RHNO1](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000171792_RHNO1.pdf) [ENSG00000171863_RPS7](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000171863_RPS7.pdf) [ENSG00000173726_TOMM20](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000173726_TOMM20.pdf) [ENSG00000173812_EIF1](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000173812_EIF1.pdf) [ENSG00000174444_RPL4](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000174444_RPL4.pdf) [ENSG00000174500_GCSAM](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000174500_GCSAM.pdf) [ENSG00000174720_LARP7](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000174720_LARP7.pdf) [ENSG00000174748_RPL15](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000174748_RPL15.pdf) [ENSG00000174851_YIF1A](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000174851_YIF1A.pdf) [ENSG00000175390_EIF3F](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000175390_EIF3F.pdf) [ENSG00000177917_ARL6IP6](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000177917_ARL6IP6.pdf) [ENSG00000178149_DALRD3](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000178149_DALRD3.pdf) [ENSG00000179144_GIMAP7](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000179144_GIMAP7.pdf) [ENSG00000179820_MYADM](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000179820_MYADM.pdf) [ENSG00000180611_MB21D2](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000180611_MB21D2.pdf) [ENSG00000181163_NPM1](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000181163_NPM1.pdf) [ENSG00000182472_CAPN12](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000182472_CAPN12.pdf) [ENSG00000182718_ANXA2](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000182718_ANXA2.pdf) [ENSG00000183813_CCR4](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000183813_CCR4.pdf) [ENSG00000184009_ACTG1](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000184009_ACTG1.pdf) [ENSG00000184508_HDDC3](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000184508_HDDC3.pdf) [ENSG00000184588_PDE4B](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000184588_PDE4B.pdf) [ENSG00000185338_SOCS1](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000185338_SOCS1.pdf) [ENSG00000187514_PTMA](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000187514_PTMA.pdf) [ENSG00000188846_RPL14](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000188846_RPL14.pdf) [ENSG00000189077_TMEM120A](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000189077_TMEM120A.pdf) [ENSG00000196329_GIMAP5](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000196329_GIMAP5.pdf) [ENSG00000196531_NACA](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000196531_NACA.pdf) [ENSG00000197111_PCBP2](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000197111_PCBP2.pdf) [ENSG00000197329_PELI1](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000197329_PELI1.pdf) [ENSG00000198242_RPL23A](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000198242_RPL23A.pdf) [ENSG00000198763_MT-ND2](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000198763_MT-ND2.pdf) [ENSG00000198830_HMGN2](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000198830_HMGN2.pdf) [ENSG00000198938_MT-CO3](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000198938_MT-CO3.pdf) [ENSG00000204628_RACK1](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000204628_RACK1.pdf) [ENSG00000211694_TRGV10](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000211694_TRGV10.pdf) [ENSG00000211750_TRBV24-1](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000211750_TRBV24-1.pdf) [ENSG00000211786_TRAV8-2](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000211786_TRAV8-2.pdf) [ENSG00000211787_TRAV8-3](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000211787_TRAV8-3.pdf) [ENSG00000211788_TRAV13-1](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000211788_TRAV13-1.pdf) [ENSG00000211789_TRAV12-2](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000211789_TRAV12-2.pdf) [ENSG00000211790_TRAV8-4](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000211790_TRAV8-4.pdf) [ENSG00000211797_TRAV17](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000211797_TRAV17.pdf) [ENSG00000211801_TRAV21](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000211801_TRAV21.pdf) [ENSG00000211803_TRAV23DV6](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000211803_TRAV23DV6.pdf) [ENSG00000211806_TRAV25](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000211806_TRAV25.pdf) [ENSG00000211807_TRAV26-1](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000211807_TRAV26-1.pdf) [ENSG00000211809_TRAV27](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000211809_TRAV27.pdf) [ENSG00000211810_TRAV29DV5](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000211810_TRAV29DV5.pdf) [ENSG00000211815_TRAV36DV7](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000211815_TRAV36DV7.pdf) [ENSG00000211817_TRAV38-2DV8](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000211817_TRAV38-2DV8.pdf) [ENSG00000213145_CRIP1](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000213145_CRIP1.pdf) [ENSG00000213402_PTPRCAP](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000213402_PTPRCAP.pdf) [ENSG00000213626_LBH](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000213626_LBH.pdf) [ENSG00000213719_CLIC1](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000213719_CLIC1.pdf) [ENSG00000224032_EPB41L4A-AS1](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000224032_EPB41L4A-AS1.pdf) [ENSG00000230124_ACBD6](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000230124_ACBD6.pdf) [ENSG00000241657_TRBV11-2](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000241657_TRBV11-2.pdf) [ENSG00000243927_MRPS6](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000243927_MRPS6.pdf) [ENSG00000274752_TRBV12-3](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000274752_TRBV12-3.pdf) [ENSG00000277734_TRAC](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000277734_TRAC.pdf) [ENSG00000278030_TRBV7-9](Fig/STEP5//Fig_mTconv_DEG_example_ENSG00000278030_TRBV7-9.pdf) [TIGIT_TIGIT](Fig/STEP5//Fig_mTconv_DEG_example_TIGIT_TIGIT.pdf) 
+
+
+<table class=" lightable-paper lightable-striped" style="font-family: Helvetica; width: auto !important; margin-left: auto; margin-right: auto;">
+ <thead>
+  <tr>
+   <th style="text-align:left;"> membership </th>
+   <th style="text-align:left;"> hgnc_symbol </th>
+   <th style="text-align:left;"> z </th>
+   <th style="text-align:left;"> pv </th>
+   <th style="text-align:left;"> fdr </th>
+   <th style="text-align:left;"> .link </th>
+  </tr>
+ </thead>
+<tbody>
+  <tr>
+   <td style="text-align:left;font-weight: bold;vertical-align: top !important;" rowspan="10"> 1 </td>
+   <td style="text-align:left;"> OSM </td>
+   <td style="text-align:left;"> 4.41 </td>
+   <td style="text-align:left;"> 1.05e-05 </td>
+   <td style="text-align:left;"> 2.34e-03 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTconv_DEG_example_ENSG00000099985_OSM.pdf) </td>
+  </tr>
+  <tr>
+   
+   <td style="text-align:left;"> DDIT4 </td>
+   <td style="text-align:left;"> 4.83 </td>
+   <td style="text-align:left;"> 1.39e-06 </td>
+   <td style="text-align:left;"> 3.57e-04 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTconv_DEG_example_ENSG00000168209_DDIT4.pdf) </td>
+  </tr>
+  <tr>
+   
+   <td style="text-align:left;"> CD27 </td>
+   <td style="text-align:left;"> -5.17 </td>
+   <td style="text-align:left;"> 2.30e-07 </td>
+   <td style="text-align:left;"> 6.52e-05 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTconv_DEG_example_CD27_CD27.pdf) </td>
+  </tr>
+  <tr>
+   
+   <td style="text-align:left;"> TRAV23DV6 </td>
+   <td style="text-align:left;"> -4.69 </td>
+   <td style="text-align:left;"> 2.73e-06 </td>
+   <td style="text-align:left;"> 6.66e-04 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTconv_DEG_example_ENSG00000211803_TRAV23DV6.pdf) </td>
+  </tr>
+  <tr>
+   
+   <td style="text-align:left;"> GIMAP6 </td>
+   <td style="text-align:left;"> -3.62 </td>
+   <td style="text-align:left;"> 2.99e-04 </td>
+   <td style="text-align:left;"> 4.52e-02 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTconv_DEG_example_ENSG00000133561_GIMAP6.pdf) </td>
+  </tr>
+  <tr>
+   
+   <td style="text-align:left;"> PASK </td>
+   <td style="text-align:left;"> 4.14 </td>
+   <td style="text-align:left;"> 3.44e-05 </td>
+   <td style="text-align:left;"> 6.78e-03 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTconv_DEG_example_ENSG00000115687_PASK.pdf) </td>
+  </tr>
+  <tr>
+   
+   <td style="text-align:left;"> TRBV7-9 </td>
+   <td style="text-align:left;"> -4.13 </td>
+   <td style="text-align:left;"> 3.58e-05 </td>
+   <td style="text-align:left;"> 7.02e-03 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTconv_DEG_example_ENSG00000278030_TRBV7-9.pdf) </td>
+  </tr>
+  <tr>
+   
+   <td style="text-align:left;"> KLRG1 </td>
+   <td style="text-align:left;"> -4.55 </td>
+   <td style="text-align:left;"> 5.39e-06 </td>
+   <td style="text-align:left;"> 1.28e-03 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTconv_DEG_example_ENSG00000139187_KLRG1.pdf) </td>
+  </tr>
+  <tr>
+   
+   <td style="text-align:left;"> FTH1 </td>
+   <td style="text-align:left;"> 9.1 </td>
+   <td style="text-align:left;"> 8.91e-20 </td>
+   <td style="text-align:left;"> 5.78e-17 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTconv_DEG_example_ENSG00000167996_FTH1.pdf) </td>
+  </tr>
+  <tr>
+   
+   <td style="text-align:left;"> CD226 </td>
+   <td style="text-align:left;"> 27.81 </td>
+   <td style="text-align:left;"> 3.69e-170 </td>
+   <td style="text-align:left;"> 1.32e-166 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTconv_DEG_example_CD226_CD226.pdf) </td>
+  </tr>
+  <tr>
+   <td style="text-align:left;font-weight: bold;vertical-align: top !important;" rowspan="20"> 2 </td>
+   <td style="text-align:left;"> ACTG1 </td>
+   <td style="text-align:left;"> 3.87 </td>
+   <td style="text-align:left;"> 1.08e-04 </td>
+   <td style="text-align:left;"> 1.95e-02 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTconv_DEG_example_ENSG00000184009_ACTG1.pdf) </td>
+  </tr>
+  <tr>
+   
+   <td style="text-align:left;"> PRDM1 </td>
+   <td style="text-align:left;"> 3.76 </td>
+   <td style="text-align:left;"> 1.67e-04 </td>
+   <td style="text-align:left;"> 2.80e-02 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTconv_DEG_example_ENSG00000057657_PRDM1.pdf) </td>
+  </tr>
+  <tr>
+   
+   <td style="text-align:left;"> DENND2D </td>
+   <td style="text-align:left;"> -3.76 </td>
+   <td style="text-align:left;"> 1.70e-04 </td>
+   <td style="text-align:left;"> 2.84e-02 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTconv_DEG_example_ENSG00000162777_DENND2D.pdf) </td>
+  </tr>
+  <tr>
+   
+   <td style="text-align:left;"> PTPN2 </td>
+   <td style="text-align:left;"> 3.76 </td>
+   <td style="text-align:left;"> 1.71e-04 </td>
+   <td style="text-align:left;"> 2.84e-02 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTconv_DEG_example_ENSG00000175354_PTPN2.pdf) </td>
+  </tr>
+  <tr>
+   
+   <td style="text-align:left;"> ARPC5 </td>
+   <td style="text-align:left;"> -3.75 </td>
+   <td style="text-align:left;"> 1.77e-04 </td>
+   <td style="text-align:left;"> 2.89e-02 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTconv_DEG_example_ENSG00000162704_ARPC5.pdf) </td>
+  </tr>
+  <tr>
+   
+   <td style="text-align:left;"> TRAV29DV5 </td>
+   <td style="text-align:left;"> -5.63 </td>
+   <td style="text-align:left;"> 1.79e-08 </td>
+   <td style="text-align:left;"> 5.65e-06 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTconv_DEG_example_ENSG00000211810_TRAV29DV5.pdf) </td>
+  </tr>
+  <tr>
+   
+   <td style="text-align:left;"> DDIT4 </td>
+   <td style="text-align:left;"> 6 </td>
+   <td style="text-align:left;"> 1.98e-09 </td>
+   <td style="text-align:left;"> 7.13e-07 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTconv_DEG_example_ENSG00000168209_DDIT4.pdf) </td>
+  </tr>
+  <tr>
+   
+   <td style="text-align:left;"> TRAV13-1 </td>
+   <td style="text-align:left;"> -3.72 </td>
+   <td style="text-align:left;"> 2.01e-04 </td>
+   <td style="text-align:left;"> 3.20e-02 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTconv_DEG_example_ENSG00000211788_TRAV13-1.pdf) </td>
+  </tr>
+  <tr>
+   
+   <td style="text-align:left;"> ANXA2 </td>
+   <td style="text-align:left;"> 4.23 </td>
+   <td style="text-align:left;"> 2.38e-05 </td>
+   <td style="text-align:left;"> 4.93e-03 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTconv_DEG_example_ENSG00000182718_ANXA2.pdf) </td>
+  </tr>
+  <tr>
+   
+   <td style="text-align:left;"> PLP2 </td>
+   <td style="text-align:left;"> 4.69 </td>
+   <td style="text-align:left;"> 2.71e-06 </td>
+   <td style="text-align:left;"> 6.65e-04 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTconv_DEG_example_ENSG00000102007_PLP2.pdf) </td>
+  </tr>
+  <tr>
+   
+   <td style="text-align:left;"> FTH1 </td>
+   <td style="text-align:left;"> 7.89 </td>
+   <td style="text-align:left;"> 2.92e-15 </td>
+   <td style="text-align:left;"> 1.60e-12 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTconv_DEG_example_ENSG00000167996_FTH1.pdf) </td>
+  </tr>
+  <tr>
+   
+   <td style="text-align:left;"> TRBV11-2 </td>
+   <td style="text-align:left;"> -4.18 </td>
+   <td style="text-align:left;"> 2.98e-05 </td>
+   <td style="text-align:left;"> 6.10e-03 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTconv_DEG_example_ENSG00000241657_TRBV11-2.pdf) </td>
+  </tr>
+  <tr>
+   
+   <td style="text-align:left;"> OSM </td>
+   <td style="text-align:left;"> 4.67 </td>
+   <td style="text-align:left;"> 3.07e-06 </td>
+   <td style="text-align:left;"> 7.44e-04 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTconv_DEG_example_ENSG00000099985_OSM.pdf) </td>
+  </tr>
+  <tr>
+   
+   <td style="text-align:left;"> SOCS1 </td>
+   <td style="text-align:left;"> 4.15 </td>
+   <td style="text-align:left;"> 3.29e-05 </td>
+   <td style="text-align:left;"> 6.58e-03 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTconv_DEG_example_ENSG00000185338_SOCS1.pdf) </td>
+  </tr>
+  <tr>
+   
+   <td style="text-align:left;"> CD226 </td>
+   <td style="text-align:left;"> 17.58 </td>
+   <td style="text-align:left;"> 3.60e-69 </td>
+   <td style="text-align:left;"> 6.11e-66 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTconv_DEG_example_CD226_CD226.pdf) </td>
+  </tr>
+  <tr>
+   
+   <td style="text-align:left;"> TRAV21 </td>
+   <td style="text-align:left;"> -6.59 </td>
+   <td style="text-align:left;"> 4.51e-11 </td>
+   <td style="text-align:left;"> 1.89e-08 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTconv_DEG_example_ENSG00000211801_TRAV21.pdf) </td>
+  </tr>
+  <tr>
+   
+   <td style="text-align:left;"> CLIC1 </td>
+   <td style="text-align:left;"> 4.07 </td>
+   <td style="text-align:left;"> 4.78e-05 </td>
+   <td style="text-align:left;"> 9.07e-03 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTconv_DEG_example_ENSG00000213719_CLIC1.pdf) </td>
+  </tr>
+  <tr>
+   
+   <td style="text-align:left;"> TRAV9-2 </td>
+   <td style="text-align:left;"> 4.54 </td>
+   <td style="text-align:left;"> 5.64e-06 </td>
+   <td style="text-align:left;"> 1.33e-03 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTconv_DEG_example_ENSG00000211793_TRAV9-2.pdf) </td>
+  </tr>
+  <tr>
+   
+   <td style="text-align:left;"> TRBV24-1 </td>
+   <td style="text-align:left;"> 5.79 </td>
+   <td style="text-align:left;"> 7.14e-09 </td>
+   <td style="text-align:left;"> 2.40e-06 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTconv_DEG_example_ENSG00000211750_TRBV24-1.pdf) </td>
+  </tr>
+  <tr>
+   
+   <td style="text-align:left;"> CD27 </td>
+   <td style="text-align:left;"> -7.13 </td>
+   <td style="text-align:left;"> 9.85e-13 </td>
+   <td style="text-align:left;"> 4.75e-10 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTconv_DEG_example_CD27_CD27.pdf) </td>
+  </tr>
+  <tr>
+   <td style="text-align:left;font-weight: bold;vertical-align: top !important;" rowspan="5"> 3 </td>
+   <td style="text-align:left;"> CITED2 </td>
+   <td style="text-align:left;"> 4.39 </td>
+   <td style="text-align:left;"> 1.14e-05 </td>
+   <td style="text-align:left;"> 2.50e-03 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTconv_DEG_example_ENSG00000164442_CITED2.pdf) </td>
+  </tr>
+  <tr>
+   
+   <td style="text-align:left;"> CD226 </td>
+   <td style="text-align:left;"> 11.08 </td>
+   <td style="text-align:left;"> 1.60e-28 </td>
+   <td style="text-align:left;"> 1.36e-25 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTconv_DEG_example_CD226_CD226.pdf) </td>
+  </tr>
+  <tr>
+   
+   <td style="text-align:left;"> ANXA1 </td>
+   <td style="text-align:left;"> -4.78 </td>
+   <td style="text-align:left;"> 1.79e-06 </td>
+   <td style="text-align:left;"> 4.47e-04 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTconv_DEG_example_ENSG00000135046_ANXA1.pdf) </td>
+  </tr>
+  <tr>
+   
+   <td style="text-align:left;"> TRAV8-4 </td>
+   <td style="text-align:left;"> 3.64 </td>
+   <td style="text-align:left;"> 2.74e-04 </td>
+   <td style="text-align:left;"> 4.19e-02 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTconv_DEG_example_ENSG00000211790_TRAV8-4.pdf) </td>
+  </tr>
+  <tr>
+   
+   <td style="text-align:left;"> ARPC5 </td>
+   <td style="text-align:left;"> -3.95 </td>
+   <td style="text-align:left;"> 7.82e-05 </td>
+   <td style="text-align:left;"> 1.44e-02 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTconv_DEG_example_ENSG00000162704_ARPC5.pdf) </td>
+  </tr>
+  <tr>
+   <td style="text-align:left;font-weight: bold;vertical-align: top !important;" rowspan="12"> 5 </td>
+   <td style="text-align:left;"> TRBV7-9 </td>
+   <td style="text-align:left;"> -4.4 </td>
+   <td style="text-align:left;"> 1.06e-05 </td>
+   <td style="text-align:left;"> 2.36e-03 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTconv_DEG_example_ENSG00000278030_TRBV7-9.pdf) </td>
+  </tr>
+  <tr>
+   
+   <td style="text-align:left;"> MRPS6 </td>
+   <td style="text-align:left;"> -3.87 </td>
+   <td style="text-align:left;"> 1.07e-04 </td>
+   <td style="text-align:left;"> 1.95e-02 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTconv_DEG_example_ENSG00000243927_MRPS6.pdf) </td>
+  </tr>
+  <tr>
+   
+   <td style="text-align:left;"> FTH1 </td>
+   <td style="text-align:left;"> 5.66 </td>
+   <td style="text-align:left;"> 1.52e-08 </td>
+   <td style="text-align:left;"> 4.84e-06 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTconv_DEG_example_ENSG00000167996_FTH1.pdf) </td>
+  </tr>
+  <tr>
+   
+   <td style="text-align:left;"> ICAM2 </td>
+   <td style="text-align:left;"> -3.74 </td>
+   <td style="text-align:left;"> 1.85e-04 </td>
+   <td style="text-align:left;"> 2.98e-02 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTconv_DEG_example_ENSG00000108622_ICAM2.pdf) </td>
+  </tr>
+  <tr>
+   
+   <td style="text-align:left;"> TIGIT </td>
+   <td style="text-align:left;"> 5.16 </td>
+   <td style="text-align:left;"> 2.46e-07 </td>
+   <td style="text-align:left;"> 6.89e-05 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTconv_DEG_example_TIGIT_TIGIT.pdf) </td>
+  </tr>
+  <tr>
+   
+   <td style="text-align:left;"> ANXA1 </td>
+   <td style="text-align:left;"> -4.2 </td>
+   <td style="text-align:left;"> 2.62e-05 </td>
+   <td style="text-align:left;"> 5.40e-03 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTconv_DEG_example_ENSG00000135046_ANXA1.pdf) </td>
+  </tr>
+  <tr>
+   
+   <td style="text-align:left;"> TRBV24-1 </td>
+   <td style="text-align:left;"> 6.98 </td>
+   <td style="text-align:left;"> 2.90e-12 </td>
+   <td style="text-align:left;"> 1.34e-09 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTconv_DEG_example_ENSG00000211750_TRBV24-1.pdf) </td>
+  </tr>
+  <tr>
+   
+   <td style="text-align:left;"> CD226 </td>
+   <td style="text-align:left;"> 20.92 </td>
+   <td style="text-align:left;"> 3.62e-97 </td>
+   <td style="text-align:left;"> 7.59e-94 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTconv_DEG_example_CD226_CD226.pdf) </td>
+  </tr>
+  <tr>
+   
+   <td style="text-align:left;"> TRAV13-1 </td>
+   <td style="text-align:left;"> -4.62 </td>
+   <td style="text-align:left;"> 3.77e-06 </td>
+   <td style="text-align:left;"> 9.07e-04 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTconv_DEG_example_ENSG00000211788_TRAV13-1.pdf) </td>
+  </tr>
+  <tr>
+   
+   <td style="text-align:left;"> DDIT4 </td>
+   <td style="text-align:left;"> 6.56 </td>
+   <td style="text-align:left;"> 5.54e-11 </td>
+   <td style="text-align:left;"> 2.30e-08 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTconv_DEG_example_ENSG00000168209_DDIT4.pdf) </td>
+  </tr>
+  <tr>
+   
+   <td style="text-align:left;"> DENND2D </td>
+   <td style="text-align:left;"> -3.91 </td>
+   <td style="text-align:left;"> 9.27e-05 </td>
+   <td style="text-align:left;"> 1.69e-02 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTconv_DEG_example_ENSG00000162777_DENND2D.pdf) </td>
+  </tr>
+  <tr>
+   
+   <td style="text-align:left;"> CD27 </td>
+   <td style="text-align:left;"> -23.86 </td>
+   <td style="text-align:left;"> 7.57e-126 </td>
+   <td style="text-align:left;"> 2.25e-122 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTconv_DEG_example_CD27_CD27.pdf) </td>
+  </tr>
+  <tr>
+   <td style="text-align:left;font-weight: bold;vertical-align: top !important;" rowspan="4"> 7 </td>
+   <td style="text-align:left;"> ACTG1 </td>
+   <td style="text-align:left;"> 5.16 </td>
+   <td style="text-align:left;"> 2.50e-07 </td>
+   <td style="text-align:left;"> 6.91e-05 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTconv_DEG_example_ENSG00000184009_ACTG1.pdf) </td>
+  </tr>
+  <tr>
+   
+   <td style="text-align:left;"> TIGIT </td>
+   <td style="text-align:left;"> -4.1 </td>
+   <td style="text-align:left;"> 4.21e-05 </td>
+   <td style="text-align:left;"> 8.06e-03 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTconv_DEG_example_TIGIT_TIGIT.pdf) </td>
+  </tr>
+  <tr>
+   
+   <td style="text-align:left;"> CD226 </td>
+   <td style="text-align:left;"> 8.64 </td>
+   <td style="text-align:left;"> 5.51e-18 </td>
+   <td style="text-align:left;"> 3.12e-15 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTconv_DEG_example_CD226_CD226.pdf) </td>
+  </tr>
+  <tr>
+   
+   <td style="text-align:left;"> FTH1 </td>
+   <td style="text-align:left;"> 5 </td>
+   <td style="text-align:left;"> 5.67e-07 </td>
+   <td style="text-align:left;"> 1.50e-04 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTconv_DEG_example_ENSG00000167996_FTH1.pdf) </td>
+  </tr>
+</tbody>
+</table>
+
 
 # 2. mTreg subtype DEG analysis
 
@@ -175,10 +608,10 @@ annot.dt <-
 
 
 ```r
-.data <- fileset.list("result/step1/matrix_final")
+.data <- fileset.list("result/step1/final_matrix")
 .mkdir("result/step5/deg/")
 .deg.data <- fileset.list("result/step5/deg/mtreg_hc_ms")
-
+.mkdir(dirname(.deg.data$mtx))
 if.needed(.deg.data, {
     .deg.data <-
         rcpp_mmutil_copy_selected_columns(.data$mtx,
@@ -207,44 +640,50 @@ if.needed(.file, {
 
     .deg.stat <-
         make.cocoa(.deg.data, .membership, .cell2indv, .indv2exp,
-                   .rank = 10, .em.iter = 20, .em.tol = 1e-8, .take.ln = TRUE,
-                   knn = 30, impute.by.knn = TRUE, num.threads = 8)
+                   knn = 50, .rank = 50, .take.ln = TRUE,
+                   impute.by.knn = TRUE, num.threads = 16)
 
    saveRDS(.deg.stat, .file)
 })
-
 .deg.stat <- readRDS(.file)
 
-.mems <- unique(annot.dt$membership)
+.cts <- unique(annot.dt$membership)
 .indvs <- unique(annot.dt$subject)
 
 .hc.ms.dt <-
-    list(tot = sort.col(.deg.stat$sum, .mems, .indvs),
-         cfa = sort.col(.deg.stat$resid.ln.mu, .mems, .indvs),
-         cfa.sd = sort.col(.deg.stat$resid.ln.mu.sd, .mems, .indvs)) %>%
-    combine.statistics()
+    list(tot = sort.col(.deg.stat$sum, .cts, .indvs),
+         cfa = sort.col(.deg.stat$resid.ln.mu, .cts, .indvs),
+         cfa.sd = sort.col(.deg.stat$resid.ln.mu.sd, .cts, .indvs)) %>%
+    combine.statistics() %>%
+    na.omit() %>%
+    as.data.table() %>% 
+    (function(x) {
+        x[, c("sample", "membership") := tstrsplit(as.character(Var2), split="_")];
+        x[, disease := substr(`sample`, 1, 2)];
+        x[, gene := as.character(Var1)];
+        x
+    }) %>% 
+    dplyr::select(-Var1, -Var2) %>% 
+    as.data.table()
 
-.hc.ms.dt[, c("subject","membership") := tstrsplit(`Var2`,split="_")]
-.hc.ms.dt[, disease := substr(`subject`,1,2)]
-.hc.ms.dt[, gene := `Var1`]
-.hc.ms.dt[, `Var1` := NULL]
-.hc.ms.dt[, `Var2` := NULL]
-
-hc.ms.deg <- summarize.deg(.hc.ms.dt)
-hc.ms.deg[, c("ensembl_gene_id", "hgnc_symbol") := tstrsplit(`gene`, split="_")]
+hc.ms.deg <-
+    summarize.deg(.hc.ms.dt, tot.cutoff = 10) %>%
+    parse.gene()
 ```
 
 [**DOWNLOAD:** mtreg DEG MS vs HC](Tab/DEG_mtreg_MS_vs_HC.txt.gz)
 
-### Found 959 unique genes strongly perturbed by MS with FDR 5%
+### Found 329 unique genes strongly perturbed by MS with FDR 5%
 
-* Up-regulated: 292
+* Up-regulated: 182
 
-* Down-regulated:  731
+* Down-regulated:  177
 
-* Total pairs of genes and clusters: 94,900
+* Total pairs of genes and clusters: 45,128
 
 ![](Fig/STEP5/Fig_mTreg_DEG_count-1.png)<!-- -->
+
+[PDF](Fig/STEP5//Fig_mtreg_DEG_count.pdf)
 
 
 ```r
@@ -266,4 +705,131 @@ hc.ms.deg[, c("ensembl_gene_id", "hgnc_symbol") := tstrsplit(`gene`, split="_")]
     as.character
 ```
 
-[ENSG00000005486_RHBDD2](Fig/STEP5//Fig_mTreg_DEG_example_ENSG00000005486_RHBDD2.pdf) [ENSG00000035403_VCL](Fig/STEP5//Fig_mTreg_DEG_example_ENSG00000035403_VCL.pdf) [ENSG00000051108_HERPUD1](Fig/STEP5//Fig_mTreg_DEG_example_ENSG00000051108_HERPUD1.pdf) [ENSG00000057657_PRDM1](Fig/STEP5//Fig_mTreg_DEG_example_ENSG00000057657_PRDM1.pdf) [ENSG00000069399_BCL3](Fig/STEP5//Fig_mTreg_DEG_example_ENSG00000069399_BCL3.pdf) [ENSG00000071073_MGAT4A](Fig/STEP5//Fig_mTreg_DEG_example_ENSG00000071073_MGAT4A.pdf) [ENSG00000077420_APBB1IP](Fig/STEP5//Fig_mTreg_DEG_example_ENSG00000077420_APBB1IP.pdf) [ENSG00000087502_ERGIC2](Fig/STEP5//Fig_mTreg_DEG_example_ENSG00000087502_ERGIC2.pdf) [ENSG00000088986_DYNLL1](Fig/STEP5//Fig_mTreg_DEG_example_ENSG00000088986_DYNLL1.pdf) [ENSG00000089220_PEBP1](Fig/STEP5//Fig_mTreg_DEG_example_ENSG00000089220_PEBP1.pdf) [ENSG00000104660_LEPROTL1](Fig/STEP5//Fig_mTreg_DEG_example_ENSG00000104660_LEPROTL1.pdf) [ENSG00000108622_ICAM2](Fig/STEP5//Fig_mTreg_DEG_example_ENSG00000108622_ICAM2.pdf) [ENSG00000109971_HSPA8](Fig/STEP5//Fig_mTreg_DEG_example_ENSG00000109971_HSPA8.pdf) [ENSG00000110852_CLEC2B](Fig/STEP5//Fig_mTreg_DEG_example_ENSG00000110852_CLEC2B.pdf) [ENSG00000118197_DDX59](Fig/STEP5//Fig_mTreg_DEG_example_ENSG00000118197_DDX59.pdf) [ENSG00000122085_MTERF4](Fig/STEP5//Fig_mTreg_DEG_example_ENSG00000122085_MTERF4.pdf) [ENSG00000125746_EML2](Fig/STEP5//Fig_mTreg_DEG_example_ENSG00000125746_EML2.pdf) [ENSG00000125898_FAM110A](Fig/STEP5//Fig_mTreg_DEG_example_ENSG00000125898_FAM110A.pdf) [ENSG00000133030_MPRIP](Fig/STEP5//Fig_mTreg_DEG_example_ENSG00000133030_MPRIP.pdf) [ENSG00000133816_MICAL2](Fig/STEP5//Fig_mTreg_DEG_example_ENSG00000133816_MICAL2.pdf) [ENSG00000135604_STX11](Fig/STEP5//Fig_mTreg_DEG_example_ENSG00000135604_STX11.pdf) [ENSG00000138668_HNRNPD](Fig/STEP5//Fig_mTreg_DEG_example_ENSG00000138668_HNRNPD.pdf) [ENSG00000142227_EMP3](Fig/STEP5//Fig_mTreg_DEG_example_ENSG00000142227_EMP3.pdf) [ENSG00000163599_CTLA4](Fig/STEP5//Fig_mTreg_DEG_example_ENSG00000163599_CTLA4.pdf) [ENSG00000169756_LIMS1](Fig/STEP5//Fig_mTreg_DEG_example_ENSG00000169756_LIMS1.pdf) [ENSG00000173113_TRMT112](Fig/STEP5//Fig_mTreg_DEG_example_ENSG00000173113_TRMT112.pdf) [ENSG00000181924_COA4](Fig/STEP5//Fig_mTreg_DEG_example_ENSG00000181924_COA4.pdf) [ENSG00000203780_FANK1](Fig/STEP5//Fig_mTreg_DEG_example_ENSG00000203780_FANK1.pdf) [ENSG00000211778_TRAV4](Fig/STEP5//Fig_mTreg_DEG_example_ENSG00000211778_TRAV4.pdf) [ENSG00000211815_TRAV36DV7](Fig/STEP5//Fig_mTreg_DEG_example_ENSG00000211815_TRAV36DV7.pdf) [ENSG00000213626_LBH](Fig/STEP5//Fig_mTreg_DEG_example_ENSG00000213626_LBH.pdf) [ENSG00000234745_HLA-B](Fig/STEP5//Fig_mTreg_DEG_example_ENSG00000234745_HLA-B.pdf) [ENSG00000242485_MRPL20](Fig/STEP5//Fig_mTreg_DEG_example_ENSG00000242485_MRPL20.pdf) 
+
+
+<table class=" lightable-paper lightable-striped" style="font-family: Helvetica; width: auto !important; margin-left: auto; margin-right: auto;">
+ <thead>
+  <tr>
+   <th style="text-align:left;"> membership </th>
+   <th style="text-align:left;"> hgnc_symbol </th>
+   <th style="text-align:left;"> z </th>
+   <th style="text-align:left;"> pv </th>
+   <th style="text-align:left;"> fdr </th>
+   <th style="text-align:left;"> .link </th>
+  </tr>
+ </thead>
+<tbody>
+  <tr>
+   <td style="text-align:left;font-weight: bold;vertical-align: top !important;" rowspan="3"> 1 </td>
+   <td style="text-align:left;"> ICAM2 </td>
+   <td style="text-align:left;"> -3.64 </td>
+   <td style="text-align:left;"> 2.73e-04 </td>
+   <td style="text-align:left;"> 2.58e-02 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTreg_DEG_example_ENSG00000108622_ICAM2.pdf) </td>
+  </tr>
+  <tr>
+   
+   <td style="text-align:left;"> HERPUD1 </td>
+   <td style="text-align:left;"> 3.51 </td>
+   <td style="text-align:left;"> 4.47e-04 </td>
+   <td style="text-align:left;"> 3.80e-02 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTreg_DEG_example_ENSG00000051108_HERPUD1.pdf) </td>
+  </tr>
+  <tr>
+   
+   <td style="text-align:left;"> CTLA4 </td>
+   <td style="text-align:left;"> 7.15 </td>
+   <td style="text-align:left;"> 8.80e-13 </td>
+   <td style="text-align:left;"> 3.89e-10 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTreg_DEG_example_ENSG00000163599_CTLA4.pdf) </td>
+  </tr>
+  <tr>
+   <td style="text-align:left;font-weight: bold;vertical-align: top !important;" rowspan="2"> 3 </td>
+   <td style="text-align:left;"> HERPUD1 </td>
+   <td style="text-align:left;"> 5.29 </td>
+   <td style="text-align:left;"> 1.25e-07 </td>
+   <td style="text-align:left;"> 3.05e-05 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTreg_DEG_example_ENSG00000051108_HERPUD1.pdf) </td>
+  </tr>
+  <tr>
+   
+   <td style="text-align:left;"> CTLA4 </td>
+   <td style="text-align:left;"> 4.19 </td>
+   <td style="text-align:left;"> 2.83e-05 </td>
+   <td style="text-align:left;"> 3.91e-03 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTreg_DEG_example_ENSG00000163599_CTLA4.pdf) </td>
+  </tr>
+  <tr>
+   <td style="text-align:left;font-weight: bold;vertical-align: top !important;" rowspan="4"> 5 </td>
+   <td style="text-align:left;"> MGAT4A </td>
+   <td style="text-align:left;"> 4.34 </td>
+   <td style="text-align:left;"> 1.41e-05 </td>
+   <td style="text-align:left;"> 2.14e-03 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTreg_DEG_example_ENSG00000071073_MGAT4A.pdf) </td>
+  </tr>
+  <tr>
+   
+   <td style="text-align:left;"> HERPUD1 </td>
+   <td style="text-align:left;"> 6.03 </td>
+   <td style="text-align:left;"> 1.62e-09 </td>
+   <td style="text-align:left;"> 5.17e-07 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTreg_DEG_example_ENSG00000051108_HERPUD1.pdf) </td>
+  </tr>
+  <tr>
+   
+   <td style="text-align:left;"> ICAM2 </td>
+   <td style="text-align:left;"> -4.98 </td>
+   <td style="text-align:left;"> 6.20e-07 </td>
+   <td style="text-align:left;"> 1.26e-04 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTreg_DEG_example_ENSG00000108622_ICAM2.pdf) </td>
+  </tr>
+  <tr>
+   
+   <td style="text-align:left;"> PRDM1 </td>
+   <td style="text-align:left;"> 3.99 </td>
+   <td style="text-align:left;"> 6.68e-05 </td>
+   <td style="text-align:left;"> 8.14e-03 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTreg_DEG_example_ENSG00000057657_PRDM1.pdf) </td>
+  </tr>
+  <tr>
+   <td style="text-align:left;font-weight: bold;vertical-align: top !important;" rowspan="3"> 6 </td>
+   <td style="text-align:left;"> TRAV4 </td>
+   <td style="text-align:left;"> 8.22 </td>
+   <td style="text-align:left;"> 2.07e-16 </td>
+   <td style="text-align:left;"> 1.14e-13 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTreg_DEG_example_ENSG00000211778_TRAV4.pdf) </td>
+  </tr>
+  <tr>
+   
+   <td style="text-align:left;"> ICAM2 </td>
+   <td style="text-align:left;"> -4.25 </td>
+   <td style="text-align:left;"> 2.18e-05 </td>
+   <td style="text-align:left;"> 3.08e-03 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTreg_DEG_example_ENSG00000108622_ICAM2.pdf) </td>
+  </tr>
+  <tr>
+   
+   <td style="text-align:left;"> CTLA4 </td>
+   <td style="text-align:left;"> 3.62 </td>
+   <td style="text-align:left;"> 2.96e-04 </td>
+   <td style="text-align:left;"> 2.74e-02 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTreg_DEG_example_ENSG00000163599_CTLA4.pdf) </td>
+  </tr>
+  <tr>
+   <td style="text-align:left;font-weight: bold;vertical-align: top !important;" rowspan="2"> 7 </td>
+   <td style="text-align:left;"> LIMS1 </td>
+   <td style="text-align:left;"> -4.31 </td>
+   <td style="text-align:left;"> 1.62e-05 </td>
+   <td style="text-align:left;"> 2.41e-03 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTreg_DEG_example_ENSG00000169756_LIMS1.pdf) </td>
+  </tr>
+  <tr>
+   
+   <td style="text-align:left;"> MRPL20 </td>
+   <td style="text-align:left;"> -3.99 </td>
+   <td style="text-align:left;"> 6.51e-05 </td>
+   <td style="text-align:left;"> 7.96e-03 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTreg_DEG_example_ENSG00000242485_MRPL20.pdf) </td>
+  </tr>
+</tbody>
+</table>

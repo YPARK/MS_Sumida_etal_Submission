@@ -1,3 +1,7 @@
+##############################
+## graph clustering methods ##
+##############################
+
 degree.cutoff <- function(G, .cutoff = 3) {
     G.sub <- G
     n.remove <- sum(igraph::degree(G.sub) < .cutoff)
@@ -82,6 +86,10 @@ run.leiden <- function(.knn,
     return(ret)
 }
 
+####################
+## naming utility ##
+####################
+
 parse.tag <- function(x) {
     x[, c("barcode", "batch") := tstrsplit(tag, split="[_]")];
     x[, barcode := gsub(`barcode`, pattern="-[0-9]$", replacement="")];
@@ -101,6 +109,10 @@ parse.gene <- function(x){
     x[, i := 1:.N]
     return(x)
 }
+
+###########################
+## adjusted data loading ##
+###########################
 
 bbknn.x <- function(.data, .bbknn, .subset = NULL, .rescale = T) {
     .cols <-
@@ -201,3 +213,61 @@ read.hash <- function(.hash.data,
     .hash.info <-
         left_join(.hash.cells, .sample.info)
 }
+
+###################
+## PCA-based Q/C ##
+###################
+
+pca.plot.vd <- function(k, VD){
+    .idx <- which(colnames(VD) %in% ("V" %&% (k:(k+1))))
+    .dt <-
+        VD[, ...idx] %>%
+        cbind(VD[, .(batch)])
+    colnames(.dt) <- c("x","y","batch")
+    .gg.plot(.dt[sample(.N)], aes(x, y, color=batch)) +
+        xlab("PC" %&% k) + ylab("PC" %&% (k+1)) +
+        ggrastr::rasterise(geom_point(stroke=0, size=.7), dpi=300) +
+        scale_color_brewer(palette = "Set3") +
+        theme(legend.position = c(1,1)) +
+        theme(legend.justification = c(1,1))
+}
+
+pca.df <- function(.mat){
+    colnames(.mat) <- "V" %&% 1:ncol(.mat)
+    as.data.frame(.mat) %>%
+        rownames_to_column("tag") %>%
+        as.data.table() %>%
+        parse.tag() %>%
+        mutate(batch = as.factor(batch))
+}
+
+diagnostic.density.kmeans <- function(.data, .kmeans){
+    .scores <- rcpp_mmutil_compute_scores(.data$mtx, .data$row, .data$col)
+    col.scores <- setDT(.scores$col)
+
+    .dt <-
+        data.table(`name` = readLines(.data$col),
+                   k = as.factor(.kmeans$cluster)) %>%
+        left_join(col.scores)
+
+    p1 <-
+        .gg.plot(.dt, aes(log1p(nnz), color=k)) +
+        theme(legend.position = c(1,1)) +
+        theme(legend.justification = c(1,1)) +
+        geom_density()
+
+    p2 <-
+        .gg.plot(.dt, aes(log1p(`mean`), color=k)) +
+        theme(legend.position = c(1,1)) +
+        theme(legend.justification = c(1,1)) +
+        geom_density()
+
+    p3 <-
+        .gg.plot(.dt, aes(log1p(`cv`), color=k)) +
+        theme(legend.position = c(1,1)) +
+        theme(legend.justification = c(1,1)) +
+        geom_density()
+
+    plt <- wrap_plots(p1, p2, p3, nrow = 1)
+}
+

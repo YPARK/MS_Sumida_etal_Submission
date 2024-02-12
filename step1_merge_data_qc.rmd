@@ -26,11 +26,12 @@ library(dplyr)
 library(patchwork)
 library(mmutilR)
 source("Util-rmd.R")
+source("Util-alg.R")
 ```
 
-# 1. Merge all the available batches into one file set
+## 1. Merge all the available batches into one file set
 
-## Combine both protein and RNA features
+### Combine all the data
 
 ```{r merge_data}
 .mkdir("result/step1")
@@ -67,15 +68,36 @@ if.needed(.data, {
 
 * Total  `r num.int(.info$max.elem)` non-zero elements
 
-## Take RNA-seq data with basic Q/C steps
+### Take HASH index
+
+```{r hash_data}
+.features <- readLines(.data$row)
+.hash <- .features[str_detect(.features, "Hash")]
+
+.hash.hdr <- "result/step1/hash"
+.hash.data <- fileset.list(.hash.hdr)
+
+if.needed(.hash.data, {
+    .hash.data <-
+        rcpp_mmutil_copy_selected_rows(.data$mtx,
+                                       .data$row,
+                                       .data$col,
+                                       .hash,
+                                       .hash.hdr)
+})
+.hash.info <- read.hash(.hash.data)
+```
+
+
+### Take RNA-seq data with basic Q/C steps
 
 ```{r take_rna_data}
 .genes <-
     fread(.data$row, col.names="feat", header=F) %>%
-    filter(str_starts(feat, "ENSG")) %>% 
+    filter(str_starts(feat, "ENSG")) %>%
     unlist(use.names = F)
 
-.mt.genes <- 
+.mt.genes <-
     fread(.data$row, col.names="feat", header=F) %>%
     filter(str_detect(feat, "_MT-")) %>%
     unlist(use.names = F)
@@ -111,74 +133,14 @@ if.needed(.mt.data, {
     rcpp_mmutil_compute_scores(.rna.data$mtx, .rna.data$row, .rna.data$col) %>%
     (function(x) setDT(x$col))
 
-.dt.mt <- 
+.dt.mt <-
     rcpp_mmutil_compute_scores(.mt.data$mtx, .mt.data$row, .mt.data$col) %>%
     (function(x) setDT(x$col))
 ```
 
-```{r hash_data}
-.features <- readLines(.data$row)
-.hash <- .features[str_detect(.features, "Hash")]
+## 2. Cell Q/C by the number of non-zero elements and mictochondrial activities
 
-.hash.hdr <- "result/step1/hash"
-.hash.data <- fileset.list(.hash.hdr)
-
-if.needed(.hash.data, {
-    .hash.data <-
-        rcpp_mmutil_copy_selected_rows(.data$mtx,
-                                       .data$row,
-                                       .data$col,
-                                       .hash,
-                                       .hash.hdr)
-})
-
-.hash.mtx <- read.dense(.hash.data$mtx)
-.hash.argmax <- apply(.hash.mtx, 2, which.max)
-```
-
-
-
-```{r run_bbknn_across_batches_hashes}
-.file <- "result/step1/bbknn/rna.rds"
-.mkdir(dirname(.file))
-
-if.needed(.file, {
-    .hash.cells <- .hash.data$col %>%
-        fread(header=F, col.names="cell") %>%
-        (function(x) {
-            x[,c("barcode","batch"):=tstrsplit(`cell`,split="_")];
-            x[, barcode := gsub(`barcode`, pattern="-[0-9]$", replacement="")];
-            x[, hash := .hash.argmax]
-            x[, batch := as.integer(`batch`)]
-            return(x);
-        })
-
-    .batches <- fread(.rna.data$col, col.names="cell", header=F) %>%
-        (function(x) {
-            x[, c("barcode", "batch") := tstrsplit(cell, split="[_]")];
-            x[, barcode := gsub(`barcode`, pattern="-[0-9]$", replacement="")];
-            x[, batch := as.integer(`batch`)]
-            x;
-        }) %>%
-        left_join(.hash.cells)
-
-    bb <- .batches %>%
-        mutate(b = batch %&% "_" %&% hash) %>%
-        select(b) %>%
-        unlist()
-
-    .bbknn <- rcpp_mmutil_bbknn_svd(.rna.data$mtx, bb,
-                                    knn=30, RANK=3,
-                                    TAKE_LN = TRUE)
-
-    saveRDS(.bbknn, .file)
-})
-
-.bbknn <- readRDS(.file)
-.factors <- .bbknn$factors.adjusted
-```
-
-# 2. Cell Q/C by the number of non-zero elements and mictochondrial activities
+### Establish Q/C threshold by `kmeans`
 
 ```{r cell_score_cutoff}
 .file <- "result/step1/qc_table.txt.gz"
@@ -186,46 +148,34 @@ if.needed(.file, {
 if.needed(.file, {
 
     .qc.dt <-
-        merge(.dt.rna, .dt.mt, by="name", suffix=c(".nonmt", ".mt")) %>% 
+        merge(.dt.rna, .dt.mt, by="name", suffix=c(".nonmt", ".mt")) %>%
         mutate(mito.frac = 100 * sum.mt / (sum.nonmt + sum.mt)) %>%
         as.data.table
 
-    .temp <- as.data.table(.factors)
-    colnames(.temp) <- "PC" %&% 1:ncol(.temp)
-    .temp <- cbind(.dt.rna[, .(name)], .temp)
-        
-    .qc.dt <- .qc.dt %>% left_join(.temp) %>% as.data.table %>% na.omit
-
     set.seed(1)
     .x <- .qc.dt$mito.frac
-    .kmeans <- kmeans(.x, centers=5, nstart=100)
-    
+    .kmeans <- kmeans(.x, centers=3, nstart=100)
+
     k.invalid <- which.max(.kmeans$centers)
     mito.cutoff <- min(.x[.kmeans$cluster == k.invalid])
 
     .y <- .qc.dt$nnz.nonmt
-    .kmeans <- kmeans(log10(.y), centers=5, nstart=100)
+    .kmeans <- kmeans(log10(.y), centers=3, nstart=100)
     k.invalid <- which.min(.kmeans$centers)
     nnz.cutoff <- max(.y[.kmeans$cluster %in% k.invalid])
-    
-    .dat <- .qc.dt[, .(PC1, PC2, PC3)] %>%
-        as.matrix %>%
-        apply(MARGIN = 2, scale)
 
     .kmeans <- kmeans(.dat, centers=2, nstart=100)
     k.valid <- which(apply(.kmeans$centers, 1, function(x) all(abs(x) < 3)))
-    pc.valid <- which(.kmeans$cluster %in% k.valid)
-    
+
     .qc.dt <- .qc.dt %>%
         mutate(j = 1:n()) %>%
         mutate(qc = if_else(nnz.nonmt > nnz.cutoff &
-                            mito.frac < mito.cutoff &
-                            j %in% pc.valid,
+                            mito.frac < mito.cutoff,
                             "pass",
                             "fail")) %>%
         dplyr::select(-j) %>%
         as.data.table
-    
+
     fwrite(.qc.dt, .file, col.names = TRUE, row.names = FALSE)
 })
 
@@ -265,81 +215,152 @@ print(plt)
 
 * Keep `r num.int(nrow(.qc.dt[qc == "pass"]))` cells, discard `r num.int(nrow(.qc.dt[qc == "fail"]))` cells
 
-```{r Fig_svd_batch, results="asis", fig.width=4, fig.height=2, echo = FALSE}
-.temp <- .qc.dt[qc == "pass"]
-.temp[, c("barcode","batch") := tstrsplit(`name`, split="_")]
-p1 <-
-    .gg.plot(.temp[sample(nrow(.temp))], aes(x=PC1, y=PC2)) +
-    ggrastr::rasterize(geom_point(aes(fill=batch), size = 1, pch = 21, stroke=0, show.legend=FALSE), dpi=300) +
-    scale_fill_brewer(palette = "Spectral")
-p2 <-
-    .gg.plot(.temp[sample(nrow(.temp))], aes(x=PC2, y=PC3)) +
-    ggrastr::rasterize(geom_point(aes(fill=batch), size = 1, pch = 21, stroke=0, show.legend=FALSE), dpi=300) +
-    scale_fill_brewer(palette = "Spectral")
-plt <- p1 | p2
-print(plt)
-.file <- fig.dir %&% "/Fig_svd_batch.pdf"
-.gg.save(filename = .file, plot = plt, width=4, height=2)
-```
+## 3. Remove weird bimodal patterns in the top three PCs
 
-## Matrix data after Q/C: `r num.int(nrow(.qc.dt[qc == "pass"]))` cells
+```{r gene_data_removing_poor_qc_cells}
+.rna.qc.hdr <- "result/step1/qc_rna"
+.rna.qc.data <- fileset.list(.rna.qc.hdr)
 
-```{r select_qc_cells}
-.qc.hdr <- "result/step1/matrix_qc"
-.qc.data <- fileset.list(.qc.hdr)
-.qc.cells <- .qc.dt[qc == "pass", .(name)] %>% unlist
+if.needed(.rna.qc.data, {
 
-if.needed(.qc.data,{
-    .qc.data <-
-        rcpp_mmutil_copy_selected_columns(.data$mtx,
-                                          .data$row,
-                                          .data$col,
+    .qc.cells <- .qc.dt[qc == "pass"]$name
+
+    .rna.qc.data <-
+        rcpp_mmutil_copy_selected_columns(.rna.data$mtx,
+                                          .rna.data$row,
+                                          .rna.data$col,
                                           .qc.cells,
-                                          .qc.hdr)
+                                          .rna.qc.hdr)
+
 })
 ```
 
-```{r}
-.info <- rcpp_mmutil_info(.qc.data$mtx)
+### Compute PCA
+
+```{r run_svd_rna_after_qc}
+.file <- "result/step1/qc_rna_svd.rds"
+.mkdir(dirname(.file))
+if.needed(.file, {
+    .svd <- rcpp_mmutil_svd(.rna.qc.data$mtx,
+                            RANK=5,
+                            TAKE_LN = TRUE)
+    saveRDS(.svd, .file)
+})
+.svd <- readRDS(.file)
 ```
 
-* Total `r num.int(.info$max.col)` cells
+```{r Fig_svd_batch, fig.width=4, fig.height=4}
+V <- .svd$V; rownames(V) <- readLines(.rna.qc.data$col)
+plots <- lapply(1:4, pca.plot.vd, VD=pca.df(V))
+plt <- wrap_plots(plots, ncol = 2)
+print(plt)
+```
 
-* Total `r num.int(.info$max.row)` features
+```{r echo=F, results="asis"}
+.file <- fig.dir %&% "/Fig_svd_batch.pdf"
+.gg.save(filename = .file, plot = plt, width=4, height=4)
+```
 
-* Total  `r num.int(.info$max.elem)` non-zero elements
+### Identify outlier cell groups, using `kmeans` on the top five PCs
 
-## Feature Q/C to remove features with too many zeros
+```{r Fig_svd_batch_filtered, fig.width=4, fig.height=4}
+.file <- "result/step1/qc_rna_svd_kmeans.rds"
+.mkdir(dirname(.file))
+if.needed(.file, {
+    set.seed(1)
+    .kmeans <- kmeans(apply(V, 2, scale), 2, iter.max = 100, nstart = 100)
+    saveRDS(.kmeans, .file)
+})
+.kmeans <- readRDS(.file)
 
-```{r feature_qc_data}
-.feature.scores <- 
-    rcpp_mmutil_compute_scores(.qc.data$mtx, .qc.data$row, .qc.data$col) %>%
-    (function(x) setDT(x$row))
+.take.largest <- function(.kmeans){
+    k.select <- which.max(table(.kmeans$cluster))
+    which(.kmeans$cluster == k.select)
+}
+.cells <- .take.largest(.kmeans)
+final.cells <- readLines(.rna.qc.data$col)[.cells]
 
-.valid.features <-
-    .feature.scores[nnz > 100 & !str_detect(`name`, "Hash"), .(name)] %>%
-    unlist
+vv <- V[.cells, ]
+plots <- lapply(1:4, pca.plot.vd, VD=pca.df(vv))
+plt <- wrap_plots(plots, ncol = 2) + ggtitle("n=" %&% num.int(length(.cells)))
+print(plt)
+```
 
-.final.hdr <- "result/step1/matrix_final"
+```{r echo=F, results="asis"}
+.file <- fig.dir %&% "/Fig_svd_batch_filtered.pdf"
+.gg.save(filename = .file, plot = plt, width=4, height=4)
+```
+
+## 4. Cell Q/C data applying the cell-level and PC-level criteria
+
+```{r cell_qc_data}
+.full.hdr <- "result/step1/matrix"
+.full.data <- fileset.list(.full.hdr)
+.qc.hdr <- "result/step1/cell_qc_matrix"
+.qc.data <- fileset.list(.qc.hdr)
+
+if.needed(.qc.data, {
+
+    .qc.data <-
+        rcpp_mmutil_copy_selected_columns(.full.data$mtx,
+                                          .full.data$row,
+                                          .full.data$col,
+                                          final.cells,
+                                          .qc.hdr)
+
+})
+```
+
+## 5. Gene Q/C to remove genes with too many zeros
+
+
+```{r Fig_gene_qc, fig.width = 4, fig.height = 4}
+.scores <- rcpp_mmutil_compute_scores(.qc.data$mtx,
+                                      .qc.data$row,
+                                      .qc.data$col)
+
+row.scores <- setDT(.scores$row)
+
+## remove hashtag
+row.scores <- row.scores[!str_detect(`name`, "[Hh]ashtag")]
+
+## remove genes expresed in too few cells
+## remove genes that are less variable
+nnz.cutoff <- 500
+cv.cutoff <- 1.25
+
+plt <-
+    ggplot(row.scores, aes(log1p(nnz), log1p(cv))) +
+    theme_classic() +
+    stat_density_2d(geom = "raster",
+                    aes(fill = after_stat(sqrt(density))),
+                    show.legend=F,
+                    contour=F) +
+    scale_fill_viridis_c() +
+    geom_vline(xintercept = log1p(nnz.cutoff), col=2, lty = 2) +
+    geom_hline(yintercept = log1p(cv.cutoff), col=2, lty = 2) +
+    stat_density2d(linewidth=.2, colour="white") +
+    scale_x_continuous("Number of Non zeros", labels = function(x) num.int(10^x)) +
+    scale_y_continuous("Coefficient of variation", labels = function(x) num.sci(10^x))
+print(plt)
+```
+
+```{r echo=F, results="asis"}
+.file <- fig.dir %&% "/Fig_gene_qc.pdf"
+.gg.save(filename = .file, plot = plt, width=4, height=4)
+```
+
+```{r final_qc_data}
+final.features <- row.scores[nnz > nnz.cutoff & cv > cv.cutoff]
+.final.hdr <- "result/step1/final_matrix"
 .final.data <- fileset.list(.final.hdr)
 
 if.needed(.final.data, {
-    .final.data <-
+    .qc.data <-
         rcpp_mmutil_copy_selected_rows(.qc.data$mtx,
                                        .qc.data$row,
                                        .qc.data$col,
-                                       .valid.features,
+                                       final.features$name,
                                        .final.hdr)
 })
 ```
-
-```{r}
-.info <- rcpp_mmutil_info(.final.data$mtx)
-```
-
-* Total `r num.int(.info$max.col)` cells
-
-* Total `r num.int(.info$max.row)` features
-
-* Total  `r num.int(.info$max.elem)` non-zero elements
-

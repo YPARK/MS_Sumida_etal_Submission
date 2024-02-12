@@ -275,13 +275,12 @@ plt.scatter.ct.2 <- function(.ct.show, .assign.tab, .mtx,
     .idx <- data.table(tag = colnames(.mtx)) %>%
         mutate(j = 1:n()) %>%
         left_join(.assign.tab[as.character(celltype) %in% .ct.show]) %>%
-        select(j, celltype, prob)
+        select(j, celltype)
 
     .dt <- data.table(m1x = .mtx[m1x, .idx$j],
                       m1y = .mtx[m1y, .idx$j],
                       m2x = .mtx[m2x, .idx$j],
                       m2y = .mtx[m2y, .idx$j],
-                      prob = .idx$prob,
                       celltype = factor(.idx$celltype, .ct.show))
     .dt <- .dt[celltype %in% .ct.show]
     .med.dt <-
@@ -308,7 +307,7 @@ plt.scatter.ct.2 <- function(.ct.show, .assign.tab, .mtx,
             theme(axis.text.x = element_text(angle=90, vjust=1, hjust=1)) +
             facet_grid(.~celltype) +
             stat_density_2d(geom = "raster",
-                            aes(fill = after_stat(density)),
+                            aes(fill = after_stat(sqrt(density))),
                             show.legend=F,
                             contour=F) +
             scale_fill_viridis_c() +

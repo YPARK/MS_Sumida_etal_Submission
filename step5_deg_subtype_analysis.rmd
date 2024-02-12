@@ -27,6 +27,10 @@ source("Util-alg.R")
 .mkdir(fig.dir)
 ```
 
+```{r include = F}
+library(kableExtra)
+```
+
 ```{r read_hash}
 .hash.hdr <- "result/step1/hash"
 .hash.data <- fileset.list(.hash.hdr)
@@ -70,15 +74,16 @@ combine.statistics <- function(.result){
 summarize.deg <- function(.dt, tot.cutoff = 3, disease.name = "MS", control.name = "HA") {
 
     ## adjust potential bias
+    .dt[, b := 0]
     .dt[`tot` >= tot.cutoff, b := mean(cfa), by = .(gene, membership)]
     .dt[, cfa := cfa - b]
 
-    ## .sd <- .dt[`tot` >= tot.cutoff,
-    ##            .(min.sd = sd(cfa) / sqrt(.N)),
-    ##            by = .(gene, membership)]
-    ## left_join(.sd) %>%
+    .sd <- .dt[`tot` >= tot.cutoff,
+               .(min.sd = sd(cfa) / sqrt(.N)),
+               by = .(gene, membership)]
 
     .dt <- .dt %>%
+        left_join(.sd) %>%
         filter(`tot` >= tot.cutoff) %>%
         mutate(w = 1/cfa.sd^2) %>%
         as.data.table
@@ -131,7 +136,7 @@ annot.dt <-
 ```
 
 ```{r mtconv_estimate_deg_stat}
-.data <- fileset.list("result/step1/matrix_final")
+.data <- fileset.list("result/step1/final_matrix")
 .mkdir("result/step5/deg/")
 .deg.data <- fileset.list("result/step5/deg/mtconv_hc_ms")
 
@@ -163,30 +168,35 @@ if.needed(.file, {
 
     .deg.stat <-
         make.cocoa(.deg.data, .membership, .cell2indv, .indv2exp,
-                   .rank = 10, .em.iter = 20, .em.tol = 1e-8, .take.ln = TRUE,
-                   knn = 30, impute.by.knn = TRUE, num.threads = 8)
+                   knn = 50, .rank = 50, .take.ln = TRUE,
+                   impute.by.knn = TRUE, num.threads = 16)
 
    saveRDS(.deg.stat, .file)
 })
-
 .deg.stat <- readRDS(.file)
 
-.mems <- unique(annot.dt$membership)
+.cts <- unique(annot.dt$membership)
 .indvs <- unique(annot.dt$subject)
 
 .hc.ms.dt <-
-    list(tot = sort.col(.deg.stat$sum, .mems, .indvs),
-         cfa = sort.col(.deg.stat$resid.ln.mu, .mems, .indvs),
-         cfa.sd = sort.col(.deg.stat$resid.ln.mu.sd, .mems, .indvs)) %>%
-    combine.statistics()
+    list(tot = sort.col(.deg.stat$sum, .cts, .indvs),
+         cfa = sort.col(.deg.stat$resid.ln.mu, .cts, .indvs),
+         cfa.sd = sort.col(.deg.stat$resid.ln.mu.sd, .cts, .indvs)) %>%
+    combine.statistics() %>%
+    na.omit() %>%
+    as.data.table() %>% 
+    (function(x) {
+        x[, c("sample", "membership") := tstrsplit(as.character(Var2), split="_")];
+        x[, disease := substr(`sample`, 1, 2)];
+        x[, gene := as.character(Var1)];
+        x
+    }) %>% 
+    dplyr::select(-Var1, -Var2) %>% 
+    as.data.table()
 
-.hc.ms.dt[, c("subject","membership") := tstrsplit(`Var2`,split="_")]
-.hc.ms.dt[, disease := substr(`subject`,1,2)]
-.hc.ms.dt[, gene := `Var1`]
-.hc.ms.dt[, `Var1` := NULL]
-.hc.ms.dt[, `Var2` := NULL]
-
-hc.ms.deg <- summarize.deg(.hc.ms.dt) %>% parse.gene()
+hc.ms.deg <-
+    summarize.deg(.hc.ms.dt, tot.cutoff = 10) %>%
+    parse.gene()
 ```
 
 ```{r mtconv_ms_vs_hc_results, results="asis", echo = FALSE}
@@ -238,7 +248,7 @@ plt <-
 
 print(plt)
 .file <- fig.dir %&% "/Fig_mTconv_DEG_count.pdf"
-#.gg.save(filename = .file, plot = plt, width=2, height=2)
+.gg.save(filename = .file, plot = plt, width=2, height=2)
 ```
 
 #### Examples
@@ -380,16 +390,33 @@ hc.ms.deg[, c("ensembl_gene_id", "hgnc_symbol") := tstrsplit(`gene`, split="_")]
 ```
 
 ```{r Fig_mTconv_DEG_example, results="asis", echo = FALSE}
+.mkdir(fig.dir %&% "/example/")
 for(g in .genes.show){
-    .file <- fig.dir %&% "/Fig_mTconv_DEG_example_" %&% g %&% ".pdf"
+    .file <- fig.dir %&% "/example/Fig_mTconv_DEG_example_" %&% g %&% ".pdf"
     if.needed(.file, {
         plt <- show.each.gene(g, .hc.ms.dt, hc.ms.deg)
         .gg.save(filename = .file, cat.link = FALSE, plot = plt, width=5, height=3)
     })
-    cat("[" %&% g %&% "](" %&% .file %&% ") ")
 }
+```
+
+```{r Tab_mTconv_DEG_FDR5, results="asis", echo = FALSE}
+data.table(gene = .genes.show) %>%
+    left_join(hc.ms.deg) %>%
+    filter(fdr < .05) %>% 
+    mutate(is.G=factor(str_starts(`gene`,"ENSG"), c(T,F), c("Gene","Ab"))) %>%
+    mutate(.file=fig.dir %&% "/example/Fig_mTconv_DEG_example_" %&% gene %&% ".pdf") %>%
+    mutate(.link = "[PDF](" %&% .file %&% ") ") %>% 
+    select(membership, hgnc_symbol, z, pv, fdr, .link) %>% 
+    mutate(z = num.round(z), pv = num.sci(pv), fdr = num.sci(fdr)) %>% 
+    arrange(membership, pv) %>%
+    kbl() %>% 
+    kable_paper("striped", full_width=F, html_font = "Helvetica") %>%
+    column_spec(1, bold = T) %>%
+    collapse_rows(columns=1, valign = "top")
 cat("\n\n\n")
 ```
+
 
 # 2. mTreg subtype DEG analysis
 
@@ -401,10 +428,10 @@ annot.dt <-
 ```
 
 ```{r mtreg_estimate_deg_stat}
-.data <- fileset.list("result/step1/matrix_final")
+.data <- fileset.list("result/step1/final_matrix")
 .mkdir("result/step5/deg/")
 .deg.data <- fileset.list("result/step5/deg/mtreg_hc_ms")
-
+.mkdir(dirname(.deg.data$mtx))
 if.needed(.deg.data, {
     .deg.data <-
         rcpp_mmutil_copy_selected_columns(.data$mtx,
@@ -433,31 +460,35 @@ if.needed(.file, {
 
     .deg.stat <-
         make.cocoa(.deg.data, .membership, .cell2indv, .indv2exp,
-                   .rank = 10, .em.iter = 20, .em.tol = 1e-8, .take.ln = TRUE,
-                   knn = 30, impute.by.knn = TRUE, num.threads = 8)
+                   knn = 50, .rank = 50, .take.ln = TRUE,
+                   impute.by.knn = TRUE, num.threads = 16)
 
    saveRDS(.deg.stat, .file)
 })
-
 .deg.stat <- readRDS(.file)
 
-.mems <- unique(annot.dt$membership)
+.cts <- unique(annot.dt$membership)
 .indvs <- unique(annot.dt$subject)
 
 .hc.ms.dt <-
-    list(tot = sort.col(.deg.stat$sum, .mems, .indvs),
-         cfa = sort.col(.deg.stat$resid.ln.mu, .mems, .indvs),
-         cfa.sd = sort.col(.deg.stat$resid.ln.mu.sd, .mems, .indvs)) %>%
-    combine.statistics()
+    list(tot = sort.col(.deg.stat$sum, .cts, .indvs),
+         cfa = sort.col(.deg.stat$resid.ln.mu, .cts, .indvs),
+         cfa.sd = sort.col(.deg.stat$resid.ln.mu.sd, .cts, .indvs)) %>%
+    combine.statistics() %>%
+    na.omit() %>%
+    as.data.table() %>% 
+    (function(x) {
+        x[, c("sample", "membership") := tstrsplit(as.character(Var2), split="_")];
+        x[, disease := substr(`sample`, 1, 2)];
+        x[, gene := as.character(Var1)];
+        x
+    }) %>% 
+    dplyr::select(-Var1, -Var2) %>% 
+    as.data.table()
 
-.hc.ms.dt[, c("subject","membership") := tstrsplit(`Var2`,split="_")]
-.hc.ms.dt[, disease := substr(`subject`,1,2)]
-.hc.ms.dt[, gene := `Var1`]
-.hc.ms.dt[, `Var1` := NULL]
-.hc.ms.dt[, `Var2` := NULL]
-
-hc.ms.deg <- summarize.deg(.hc.ms.dt)
-hc.ms.deg[, c("ensembl_gene_id", "hgnc_symbol") := tstrsplit(`gene`, split="_")]
+hc.ms.deg <-
+    summarize.deg(.hc.ms.dt, tot.cutoff = 10) %>%
+    parse.gene()
 ```
 
 ```{r mtreg_ms_vs_hc_results, results="asis", echo = FALSE}
@@ -492,7 +523,7 @@ plt <-
 
 print(plt)
 .file <- fig.dir %&% "/Fig_mtreg_DEG_count.pdf"
-#.gg.save(filename = .file, plot = plt, width=2, height=2)
+.gg.save(filename = .file, plot = plt, width=2, height=2)
 ```
 
 ```{r}
@@ -515,13 +546,30 @@ hc.ms.deg[, c("ensembl_gene_id", "hgnc_symbol") := tstrsplit(`gene`, split="_")]
 ```
 
 ```{r Fig_mTreg_DEG_example, results="asis", echo = FALSE}
+.mkdir(fig.dir %&% "/example/")
 for(g in .genes.show){
-    .file <- fig.dir %&% "/Fig_mTreg_DEG_example_" %&% g %&% ".pdf"
+    .file <- fig.dir %&% "/example/Fig_mTreg_DEG_example_" %&% g %&% ".pdf"
     if.needed(.file, {
         plt <- show.each.gene(g, .hc.ms.dt, hc.ms.deg)
         .gg.save(filename=.file, cat.link=FALSE, plot=plt, width=7, height=3)
     })
-    cat("[" %&% g %&% "](" %&% .file %&% ") ")
 }
+cat("\n\n\n")
+```
+
+```{r Tab_mTreg_DEG_FDR5, results="asis", echo = FALSE}
+data.table(gene = .genes.show) %>%
+    left_join(hc.ms.deg) %>%
+    filter(fdr < .05) %>% 
+    mutate(is.G=factor(str_starts(`gene`,"ENSG"), c(T,F), c("Gene","Ab"))) %>%
+    mutate(.file=fig.dir %&% "/example/Fig_mTreg_DEG_example_" %&% gene %&% ".pdf") %>%
+    mutate(.link = "[PDF](" %&% .file %&% ") ") %>% 
+    select(membership, hgnc_symbol, z, pv, fdr, .link) %>% 
+    mutate(z = num.round(z), pv = num.sci(pv), fdr = num.sci(fdr)) %>% 
+    arrange(membership, pv) %>%
+    kbl() %>% 
+    kable_paper("striped", full_width=F, html_font = "Helvetica") %>%
+    column_spec(1, bold = T) %>%
+    collapse_rows(columns=1, valign = "top")
 cat("\n\n\n")
 ```

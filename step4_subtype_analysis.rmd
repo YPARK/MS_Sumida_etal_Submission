@@ -2,7 +2,7 @@
 title: "Step 4: subtype analysis"
 author: Yongjin Park
 theme: jekyll-theme-minimal
-date: "`r Sys.Date()`"
+date: "2024-02-08"
 bibliography: "MS_Ref.bib"
 output:
   html_document:
@@ -13,25 +13,24 @@ output:
 
 
 ```{r GlobOpt, include = FALSE}
-fig.dir <- 'Fig/STEP4/'
+fig.dir = 'Fig/STEP4/'
 dir.create(fig.dir, recursive = TRUE, showWarnings = FALSE)
 knitr::opts_knit$set(eval.after = 'fig.cap')
 knitr::opts_chunk$set(warning = FALSE, message = FALSE, fig.path = fig.dir)
-knitr::opts_chunk$set(fig.width=8, fig.height=8, results="asis")
+knitr::opts_chunk$set(fig.width=8, fig.height=8)
 options(stringsAsFactors = FALSE)
-FIG.CAP <- '**Fig.**'
+FIG.CAP = '**Fig.**'
 library(data.table)
-library(tidyverse)
+library(dplyr)
 library(patchwork)
 library(mmutilR)
-library(matrixTests)
+library(Matrix)
 source("Util-rmd.R")
 source("Util-alg.R")
 ```
-
 * Marker genes well-known for mTconv cell subtype classification
 
-```{r}
+```{r echo = T}
 .markers <-
     c("CD3", "CD3E", "CD14", "LYZ",
       "CCR4","CCR6","CXCR3","CXCR5",
@@ -56,15 +55,14 @@ source("Util-alg.R")
 
 * Goal: Identify cellular states/subtypes in memory T cells
 
-```{r read_hash_info, inclue = FALSE}
+```{r}
 .hash.hdr <- "result/step1/hash"
 .hash.data <- fileset.list(.hash.hdr)
 .hash.info <- read.hash(.hash.data)
+annot.dt <- fread("Tab/step2_cell_type.txt.gz") %>%
+    left_join(.hash.info)
 ```
 
-```{r read_cell_annot}
-annot.dt <- fread("Tab/step2_celltype.txt.gz")
-```
 
 ```{r include=FALSE}
 .sum.stat.batch <- function(.dt) {
@@ -101,87 +99,10 @@ annot.dt <- fread("Tab/step2_celltype.txt.gz")
 }
 ```
 
-```{r include = F}
-.plot.vd.fun <- function(k, VD){
-    .idx <- which(colnames(VD) %in% ("V" %&% (k:(k+1))))
-    .dt <-
-        VD[, ...idx] %>%
-        cbind(VD[, .(batch)])
-    colnames(.dt) <- c("x","y","batch")
-    .gg.plot(.dt[sample(.N)], aes(x, y, color=batch)) +
-        xlab("PC" %&% k) + ylab("PC" %&% (k+1)) +
-        ggrastr::rasterise(geom_point(stroke=0, size=.7), dpi=300) +
-        scale_color_brewer(palette = "Set3") +
-        theme(legend.position = c(1,1)) +
-        theme(legend.justification = c(1,1))
-}
-.pca.df <- function(.mat){
-    colnames(.mat) <- "V" %&% 1:ncol(.mat)
-    as.data.frame(.mat) %>%
-        rownames_to_column("tag") %>%
-        as.data.table() %>%
-        parse.tag() %>%
-        mutate(batch = as.factor(batch))
-}
-diagnostic.density.kmeans <- function(.data, .kmeans){
-    .scores <- rcpp_mmutil_compute_scores(.data$mtx, .data$row, .data$col)
-    col.scores <- setDT(.scores$col)
-
-    .dt <-
-        data.table(`name` = readLines(.data$col),
-                   k = as.factor(.kmeans$cluster)) %>%
-        left_join(col.scores)
-
-    p1 <-
-        .gg.plot(.dt, aes(log1p(nnz), color=k)) +
-        theme(legend.position = c(1,1)) +
-        theme(legend.justification = c(1,1)) +
-        geom_density()
-
-    p2 <-
-        .gg.plot(.dt, aes(log1p(`mean`), color=k)) +
-        theme(legend.position = c(1,1)) +
-        theme(legend.justification = c(1,1)) +
-        geom_density()
-
-    p3 <-
-        .gg.plot(.dt, aes(log1p(`cv`), color=k)) +
-        theme(legend.position = c(1,1)) +
-        theme(legend.justification = c(1,1)) +
-        geom_density()
-
-    plt <- wrap_plots(p1, p2, p3, nrow = 1)
-}
-```
-
-
-```{r include = F}
-qc.leiden <- function(.leiden.raw, .cutoff = .75){
-
-    .dt <- .leiden.raw %>% as.data.table() %>% parse.tag()
-
-    .remove <-
-        .dt %>%
-        group_by(membership, component, batch) %>%
-        count() %>% 
-        ungroup() %>% 
-        group_by(membership, component) %>%
-        mutate(n.tot = sum(`n`)) %>% 
-        ungroup() %>%
-        filter(`n`/`n.tot` > .75) %>%
-        select(membership, component)
-
-    ret <-
-        anti_join(.leiden.raw, .remove) %>%
-        as.data.table()
-    return(ret)
-}
-```
-
 ## 1. Memory T conventional
 
-```{r take_subset_mtconv}
-.full.data <- fileset.list("result/step2/matrix_final")
+```{r}
+.full.data <- fileset.list("result/step1/final_matrix")
 .mkdir("result/step4/")
 .data <- fileset.list("result/step4/mtconv")
 
@@ -196,36 +117,15 @@ if.needed(.data, {
 })
 ```
 
-### Perform outlier Q/C to detect and remove batch-specific cells
-
-```{r do_svd_mtconv}
-.file <- "result/step4/mtconv_svd.rds"
-if.needed(.file, {
-    .svd <- rcpp_mmutil_svd(.data$mtx, RANK=30, TAKE_LN=T, NUM_THREADS = 16, EM_ITER = 20)
-    saveRDS(.svd, .file)
-})
-.svd <- readRDS(.file)
-```
-
-#### Can we identify troublesome batch-specific principal components?
-
-##### Show PCs computed on surface protein data
-
-```{r Fig_mtconv_PC, fig.width=9, fig.height=9}
-V <- sweep(.svd$V, 2, .svd$D, `*`)
-rownames(V) <- readLines(.data$col)
-plots <- lapply(1:9, .plot.vd.fun, VD = .pca.df(V))
-plt <- wrap_plots(plots, ncol = 3)
-print(plt)
-```
-
-* We can adjust systemic batch-specific effects by batch-balancing k-nearest neighbour method. This shouldn't be much trouble.
+### Perform SVD and build batch-balancing kNN graph
 
 ```{r run_mtconv_bbknn_svd}
 .file <- "result/step4/mtconv_bbknn.rds"
 if.needed(.file, {
 
     .batches <- take.batch.info(.data)
+
+    .svd <- rcpp_mmutil_svd(.data$mtx, RANK=50, TAKE_LN=T, EM_ITER = 20, NUM_THREADS=16)
 
     .bbknn <-
         rcpp_mmutil_bbknn(r_svd_u = .svd$U,
@@ -242,54 +142,45 @@ if.needed(.file, {
 .bbknn <- readRDS(.file)
 ```
 
-```{r Fig_mtconv_PC_adj, fig.width=9, fig.height=9}
+```{r Fig_svd_batch_mtconv, fig.width=9, fig.height=9}
 VD <- .bbknn$factors.adjusted
 rownames(VD) <- readLines(.data$col)
-plots <- lapply(1:9, .plot.vd.fun, VD = .pca.df(VD))
+plots <- lapply(1:9, pca.plot.vd, VD=pca.df(VD))
 plt <- wrap_plots(plots, ncol = 3)
 print(plt)
 ```
 
+```{r echo=F, results="asis"}
+.file <- fig.dir %&% "/Fig_svd_batch_mtconv.pdf"
+.gg.save(filename = .file, plot = plt, width=9, height=9)
+```
+
 ### A. Clustering cells by batch-balancing k-nearest neighbour graph
 
-```{r bbknn_leiden_mtconv}
-.file <- "Tab/step4_mtconv_leiden_raw.txt.gz"
+```{r run_leiden_mtconv}
+.file <- "Tab/step4_mtconv_leiden.txt.gz"
 if.needed(.file, {
     .tags <- readLines(.data$col)
     .leiden <- run.leiden(.bbknn$knn.adj, .tags, res=.7, nrepeat = 100, min.size = 100)
     fwrite(.leiden, .file)
 })
-.leiden.raw <- fread(.file)
+.leiden <- fread(.file)
 ```
 
-#### Filter out small cluster cells if we have enriched specific batches
+[**DOWNLOAD:** mTconv Leiden results](Tab/step4_mtconv_leiden.txt.gz)
 
-```{r leiden_qc_mtconv}
-.file <- "Tab/step4_mtconv_leiden.txt.gz"
-if.needed(.file, {
-    .leiden <- qc.leiden(.leiden.raw, .cutoff = .75)
-    fwrite(.leiden, .file)
-})
-.leiden <- fread(.file)    
-```
 
-```{r echo = F, results = "asis"}
-.mkdir("Tab/")
-cat("[**DOWNLOAD:** mTconv Leiden results]("%&% .file %&% ")\n\n")
-```
-
-```{r calculate_tumap_coordinates_mtconv}
+```{r calc_tumap_mtconv}
 .file <- "Tab/step4_tumap_mtconv.txt.gz"
 if.needed(.file, {
 
     set.seed(1)
     .umap <- uwot::tumap(.bbknn$factors.adjusted,
-                         learning_rate=.1,
+                         learning_rate=1,
                          n_epochs=3000,
                          n_sgd_threads=16,
                          verbose=T,
-                         init="spectral",
-                         scale=T)
+                         init="pca")
 
     .tags <- readLines(.data$col)
 
@@ -305,12 +196,10 @@ if.needed(.file, {
 .umap.dt <- fread(.file)
 ```
 
-```{r echo = F, results = "asis"}
-.mkdir("Tab/")
-cat("[**DOWNLOAD:** mTconv UMAP results]("%&% .file %&% ")\n\n")
-```
+[**DOWNLOAD:** mTconv UMAP results](Tab/step4_tumap_mtconv.txt.gz)
 
-```{r calculate_tSNE_coordinates_mtconv}
+
+```{r calc_tsne_mtconv}
 .file <- "Tab/step4_tsne_mtconv.txt.gz"
 if.needed(.file, {
 
@@ -333,15 +222,12 @@ if.needed(.file, {
 .tsne.dt <- fread(.file)
 ```
 
-```{r echo = F, results = "asis"}
-.mkdir("Tab/")
-cat("[**DOWNLOAD:** mTconv tSNE results]("%&% .file %&% ")\n\n")
-```
+[**DOWNLOAD:** mTconv tSNE results](Tab/step4_tsne_mtconv.txt.gz)
 
 
 ### B. What are the cell-cluster-specific marker genes?
 
-```{r find_mtconv_marker_genes}
+```{r}
 .mkdir("Tab/")
 .file <- "Tab/step4_mtconv_gene_stat.txt.gz"
 if.needed(.file, {
@@ -352,17 +238,16 @@ if.needed(.file, {
 marker.stat <- fread(.file, sep = "\t")
 ```
 
-```{r echo = F, results = "asis"}
-cat("[**DOWNLOAD:** mTconv marker gene statistics]("%&% .file %&% ")\n\n")
-```
+[**DOWNLOAD:** mTconv marker gene statistics](Tab/step4_mtconv_gene_stat.txt.gz)
+
+
 
 ### C. Non-linear embedding to confirm the cell clusters of mTconv cells
 
 ```{r Fig_bbknn_mtconv, fig.width=6, fig.height=3}
 .cells <-
     left_join(.umap.dt, .tsne.dt) %>%
-    left_join(.leiden) %>%
-    left_join(.hash.info) %>%
+    left_join(.hash.info) %>% 
     na.omit()
 
 .lab <-
@@ -373,7 +258,7 @@ cat("[**DOWNLOAD:** mTconv marker gene statistics]("%&% .file %&% ")\n\n")
              tSNE2=median(tSNE2)),
            by = .(component, membership)]
 
-.cols <- .more.colors(nrow(.lab), nc.pal=12)
+.cols <- .more.colors(nrow(.lab), nc.pal=8, .palette="Set1")
 
 p1 <-
     .gg.plot(.cells, aes(UMAP1, UMAP2, color=as.factor(membership))) +
@@ -396,7 +281,10 @@ print(plt)
 .gg.save(filename = .file, plot = plt, width=6, height=3)
 ```
 
+
 ##### Confirm batch/individual-specific effects
+
+**NOTE: Normalized expressions across cells within the same major cell type!**
 
 ```{r Fig_bbknn_mtconv_sub, fig.width=6, fig.height=3}
 .cols <- .more.colors(10, nc.pal=7, .palette="Set1")
@@ -421,10 +309,6 @@ print(plt)
 .file <- fig.dir %&% "/Fig_bbknn_mtconv_sub.pdf"
 .gg.save(filename = .file, plot = plt, width=6, height=3)
 ```
-
-### D. Summary heatmap
-
-**NOTE** The colors are standardized `log1p` expression across genes and cells.
 
 ```{r select_mtconv_marker_genes}
 x.melt <- bbknn.x.melt(.data, .bbknn, .markers)
@@ -488,6 +372,7 @@ print(plt)
 #### UMAP for each marker gene (normalized expression)
 
 ```{r Fig_mtconv_gene_umap, fig.width=3, fig.height=2.5, results="asis"}
+.mkdir(fig.dir %&% "/example/")
 for(g in unique(x.melt$gene)) {
     .dt <- left_join(x.melt[gene == g], .cells)
     .aes <- aes(UMAP1, UMAP2, color=pmax(pmin(x, 3), -3))
@@ -501,7 +386,7 @@ for(g in unique(x.melt$gene)) {
         scale_color_distiller(g, palette = "RdBu", direction = -1) +
         ggtitle(g)
 
-    .file <- fig.dir %&% "/Fig_mtconv_gene_umap_" %&% g %&% ".pdf"
+    .file <- fig.dir %&% "/example/Fig_mtconv_gene_umap_" %&% g %&% ".pdf"
     .gg.save(filename = .file, plot = plt, width=3, height=2.5, cat.link = F)
     cat("[" %&% g %&% "](" %&% .file %&% ") ")
 }
@@ -510,6 +395,7 @@ for(g in unique(x.melt$gene)) {
 #### tSNE for each marker gene (normalized expression)
 
 ```{r Fig_mtconv_gene_tsne, fig.width=3, fig.height=2.5, results="asis"}
+.mkdir(fig.dir %&% "/example/")
 for(g in unique(x.melt$gene)) {
     .dt <- left_join(x.melt[gene == g], .cells)
     .aes <- aes(tSNE1, tSNE2, color=pmax(pmin(x, 3), -3))
@@ -523,7 +409,7 @@ for(g in unique(x.melt$gene)) {
         scale_color_distiller(g, palette = "RdBu", direction = -1) +
         ggtitle(g)
 
-    .file <- fig.dir %&% "/Fig_mtconv_gene_tsne_" %&% g %&% ".pdf"
+    .file <- fig.dir %&% "/example/Fig_mtconv_gene_tsne_" %&% g %&% ".pdf"
     .gg.save(filename = .file, plot = plt, width=3, height=2.5, cat.link = F)
     cat("[" %&% g %&% "](" %&% .file %&% ") ")
 }
@@ -545,7 +431,7 @@ print(plt)
 
 ```{r echo = FALSE, results="asis"}
 .file <- fig.dir %&% "/Fig_count_mtconv_tot.pdf"
-.gg.save(filename = .file, plot = plt, height=3, width=6)
+.gg.save(filename = .file, plot = plt, width=6, height=3)
 ```
 
 ```{r Fig_count_merged_mtconv_tot, fig.width=2, fig.height=3}
@@ -566,11 +452,10 @@ print(plt)
 .gg.save(filename = .file, plot = plt, width=2, height=3)
 ```
 
-
 ## 2. Memory Treg cells
 
 ```{r take_subset_mtreg}
-.full.data <- fileset.list("result/step2/matrix_final")
+.full.data <- fileset.list("result/step1/final_matrix")
 .mkdir("result/step4/")
 .data <- fileset.list("result/step4/mtreg")
 
@@ -585,10 +470,12 @@ if.needed(.data, {
 })
 ```
 
+
 ### Perform outlier Q/C to detect and remove batch-specific cells
 
 ```{r do_svd_mtreg}
 .file <- "result/step4/mtreg_svd.rds"
+
 if.needed(.file, {
     .svd <- rcpp_mmutil_svd(.data$mtx, RANK=30, TAKE_LN=T, NUM_THREADS = 16, EM_ITER = 20)
     saveRDS(.svd, .file)
@@ -598,23 +485,96 @@ if.needed(.file, {
 
 #### Can we identify troublesome batch-specific principal components?
 
-##### Show PCs computed on surface protein data
+##### Show PCs to reveal potential biases
 
-```{r Fig_mtreg_PC, fig.width=9, fig.height=9}
+```{r Fig_svd_batch_mtreg, fig.width=9, fig.height=9}
 V <- sweep(.svd$V, 2, .svd$D, `*`)
 rownames(V) <- readLines(.data$col)
-plots <- lapply(1:9, .plot.vd.fun, VD = .pca.df(V))
+plots <- lapply(1:9, pca.plot.vd, VD=pca.df(V))
 plt <- wrap_plots(plots, ncol = 3)
 print(plt)
 ```
 
-* We can adjust systemic batch-specific effects by batch-balancing k-nearest neighbour method. This shouldn't be much trouble.
+* We found strong bimodal distributions for the PC #2
+
+```{r Fig_mtreg_pc_bimodal, fig.width=8, fig.height=2}
+par(mfrow=c(1,5))
+for(k in 1:5){
+    hist(.svd$V[,k], 50, main = "PC" %&% k, xlab="")
+}
+```
+
+##### Identify outlier cells in gene expression data
+
+```{r select_mtreg_cells_excluding_outliers}
+set.seed(1)
+.kmeans <- kmeans(.svd$V[, 1:5], 2, nstart = 100)
+k.select <- which.max(table(.kmeans$cluster))
+.qc.cells <- readLines(.data$col)[.kmeans$cluster == k.select]
+```
+
+```{r Fig_mtreg_PC_kmeans, fig.width=9, fig.height=9}
+V <- .svd$V; rownames(V) <- readLines(.data$col)
+.vd <- pca.df(V)
+.vd[, batch := as.factor(.kmeans$cluster)]
+
+plots <- lapply(1:9, pca.plot.vd, VD = .vd)
+plt <- wrap_plots(plots, ncol = 3)
+print(plt)
+```
+
+```{r Fig_mtreg_kmeans_QC, fig.width=9, fig.height=3}
+plt <- diagnostic.density.kmeans(.data, .kmeans)
+print(plt)
+```
+
+
+```{r remove_mtreg_outlier_cells, echo = F}
+.mtreg.qc.hdr <- "result/step4/qc_mtreg"
+.mtreg.qc.data <- fileset.list(.mtreg.qc.hdr)
+
+if.needed(.mtreg.qc.data, {
+
+    .mtreg.qc.data <-
+        rcpp_mmutil_copy_selected_columns(.data$mtx,
+                                          .data$row,
+                                          .data$col,
+                                          .qc.cells,
+                                          .mtreg.qc.hdr)
+
+})
+```
+
+```{r compute_mtreg_svd_after_qc}
+.file <- "result/step4/qc_mtreg_svd.rds"
+
+if.needed(.file, {
+    mtreg.svd <- rcpp_mmutil_svd(.mtreg.qc.data$mtx, RANK=50, TAKE_LN=T,
+                                NUM_THREADS = 16, EM_ITER = 20)
+    saveRDS(mtreg.svd, .file)
+})
+mtreg.svd <- readRDS(.file)
+
+V <- mtreg.svd$V; rownames(V) <- readLines(.mtreg.qc.data$col)
+plots <- lapply(1:9, pca.plot.vd, VD = pca.df(V))
+plt <- wrap_plots(plots, ncol = 3)
+print(plt)
+```
+
+```{r}
+.data <- .mtreg.qc.data
+```
+
+### Perform SVD and build batch-balancing kNN graph
 
 ```{r run_mtreg_bbknn_svd}
 .file <- "result/step4/mtreg_bbknn.rds"
+
 if.needed(.file, {
 
     .batches <- take.batch.info(.data)
+
+    .svd <- rcpp_mmutil_svd(.data$mtx, RANK=50, TAKE_LN=T, EM_ITER = 20, NUM_THREADS=16)
 
     .bbknn <-
         rcpp_mmutil_bbknn(r_svd_u = .svd$U,
@@ -631,28 +591,47 @@ if.needed(.file, {
 .bbknn <- readRDS(.file)
 ```
 
-```{r Fig_mtreg_PC_adj, fig.width=9, fig.height=9}
-VD <- .bbknn$factors.adjusted
-rownames(VD) <- readLines(.data$col)
-plots <- lapply(1:9, .plot.vd.fun, VD = .pca.df(VD))
-plt <- wrap_plots(plots, ncol = 3)
-print(plt)
+
+```{r echo=F, results="asis"}
+.file <- fig.dir %&% "/Fig_svd_batch_mtreg.pdf"
+.gg.save(filename = .file, plot = plt, width=9, height=9)
 ```
 
 ### A. Clustering cells by batch-balancing k-nearest neighbour graph
 
-
-```{r bbknn_leiden_mtreg}
+```{r run_leiden_mtreg}
 .file <- "Tab/step4_mtreg_leiden_raw.txt.gz"
 if.needed(.file, {
     .tags <- readLines(.data$col)
-    .leiden <- run.leiden(.bbknn$knn.adj, .tags, res=.7, nrepeat = 100, min.size = 100)
-    fwrite(.leiden, .file)
+    .leiden.raw <- run.leiden(.bbknn$knn.adj, .tags, res=.5, nrepeat = 100, min.size = 100)
+    fwrite(.leiden.raw, .file)
 })
 .leiden.raw <- fread(.file)
 ```
 
-#### Filter out small cluster cells if we have enriched specific batches
+
+```{r include = F}
+qc.leiden <- function(.leiden.raw, .cutoff = .75){
+
+    .dt <- .leiden.raw %>% as.data.table() %>% parse.tag()
+
+    .remove <-
+        .dt %>%
+        group_by(membership, component, batch) %>%
+        count() %>% 
+        ungroup() %>% 
+        group_by(membership, component) %>%
+        mutate(n.tot = sum(`n`)) %>% 
+        ungroup() %>%
+        filter(`n`/`n.tot` > .75) %>%
+        select(membership, component)
+
+    ret <-
+        anti_join(.leiden.raw, .remove) %>%
+        as.data.table()
+    return(ret)
+}
+```
 
 ```{r leiden_qc_mtreg}
 .file <- "Tab/step4_mtreg_leiden.txt.gz"
@@ -663,10 +642,8 @@ if.needed(.file, {
 .leiden <- fread(.file)    
 ```
 
-```{r echo = F, results = "asis"}
-.mkdir("Tab/")
-cat("[**DOWNLOAD:** mTreg Leiden results]("%&% .file %&% ")\n\n")
-```
+[**DOWNLOAD:** mtreg Leiden results](Tab/step4_mtreg_leiden.txt.gz)
+
 
 ```{r calculate_tumap_coordinates_mtreg}
 .file <- "Tab/step4_tumap_mtreg.txt.gz"
@@ -674,12 +651,11 @@ if.needed(.file, {
 
     set.seed(1)
     .umap <- uwot::tumap(.bbknn$factors.adjusted,
-                         learning_rate=.1,
+                         learning_rate=1,
                          n_epochs=3000,
                          n_sgd_threads=16,
                          verbose=T,
-                         init="spectral",
-                         scale=T)
+                         init="pca")
 
     .tags <- readLines(.data$col)
 
@@ -726,6 +702,7 @@ if.needed(.file, {
 .mkdir("Tab/")
 cat("[**DOWNLOAD:** mtreg tSNE results]("%&% .file %&% ")\n\n")
 ```
+
 
 
 ### B. What are the cell-cluster-specific marker genes?
@@ -872,9 +849,11 @@ print(plt)
 .gg.save(filename = .file, plot = plt, width=6, height=6.5)
 ```
 
+
 #### UMAP for each marker gene
 
 ```{r Fig_mtreg_gene_umap, fig.width=3, fig.height=2.5, results="asis"}
+.mkdir(fig.dir %&% "/example/")
 for(g in unique(x.melt$gene)) {
     .dt <- left_join(x.melt[gene == g], .cells)
     .aes <- aes(UMAP1, UMAP2, color=pmax(pmin(x, 3), -3))
@@ -888,7 +867,7 @@ for(g in unique(x.melt$gene)) {
         scale_color_distiller(g, palette = "RdBu", direction = -1) +
         ggtitle(g)
 
-    .file <- fig.dir %&% "/Fig_mtreg_gene_umap_" %&% g %&% ".pdf"
+    .file <- fig.dir %&% "/example/Fig_mtreg_gene_umap_" %&% g %&% ".pdf"
     .gg.save(filename = .file, plot = plt, width=3, height=2.5, cat.link = F)
     cat("[" %&% g %&% "](" %&% .file %&% ") ")
 }
@@ -897,6 +876,7 @@ for(g in unique(x.melt$gene)) {
 #### tSNE for each marker gene
 
 ```{r Fig_mtreg_gene_tsne, fig.width=3, fig.height=2.5, results="asis"}
+.mkdir(fig.dir %&% "/example/")
 for(g in unique(x.melt$gene)) {
     .dt <- left_join(x.melt[gene == g], .cells)
     .aes <- aes(tSNE1, tSNE2, color=pmax(pmin(x, 3), -3))
@@ -910,7 +890,7 @@ for(g in unique(x.melt$gene)) {
         scale_color_distiller(g, palette = "RdBu", direction = -1) +
         ggtitle(g)
 
-    .file <- fig.dir %&% "/Fig_mtreg_gene_tsne_" %&% g %&% ".pdf"
+    .file <- fig.dir %&% "/example/Fig_mtreg_gene_tsne_" %&% g %&% ".pdf"
     .gg.save(filename = .file, plot = plt, width=3, height=2.5, cat.link = F)
     cat("[" %&% g %&% "](" %&% .file %&% ") ")
 }
