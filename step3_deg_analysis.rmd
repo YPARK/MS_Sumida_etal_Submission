@@ -216,7 +216,7 @@ print(plt)
 
 ```{r results="asis", echo = F}
 .file <- fig.dir %&% "/Fig_DEG_hist.pdf"
-#.gg.save(filename = .file, plot = plt, width=5, height=3)
+.gg.save(filename = .file, plot = plt, width=5, height=3)
 ```
 
 ```{r ms_vs_hc_results, results="asis", echo = FALSE}
@@ -354,7 +354,7 @@ plot.bulk.sc <- function(.sc, .bulk,
 ```{r Fig_DEG_comparison_mTreg, fig.width=5, fig.height=5, echo = FALSE, results="asis"}
 print(.out$plt)
 .file <- fig.dir %&% "/Fig_DEG_comparison_mTreg.pdf"
-#.gg.save(filename = .file, plot = .out$plt, width=5, height=5)
+.gg.save(filename = .file, plot = .out$plt, width=5, height=5)
 ```
 
 * Here, we computed correlation between the bulk and scRNA-seq results after selecting on the DEGs marginally significant in the bulk analysis ($|t| > 2$).
@@ -381,7 +381,7 @@ print(.out$plt)
 ```{r Fig_DEG_comparison_mTconv, fig.width=5, fig.height=5, echo = FALSE, results="asis"}
 .file <- fig.dir %&% "/Fig_DEG_comparison_mTconv.pdf"
 print(.out$plt)
-#.gg.save(filename = .file, plot = .out$plt, width=5, height=5)
+.gg.save(filename = .file, plot = .out$plt, width=5, height=5)
 ```
 
 * Here, we computed correlation between the bulk and scRNA-seq results after selecting on the DEGs marginally significant in the bulk analysis ($|t| > 2$).
@@ -430,7 +430,7 @@ print(plt)
 
 ```{r results="asis", echo = F}
 .file <- fig.dir %&% "/Fig_DEG_count.pdf"
-#.gg.save(filename = .file, plot = plt, width=2, height=2)
+.gg.save(filename = .file, plot = plt, width=2, height=2)
 ```
 
 ## 2. Show genes with FWER $< 10^{-2}$ overlapping with the bulk DEGs

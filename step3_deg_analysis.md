@@ -122,6 +122,7 @@ print(plt)
 ![](Fig/STEP3/Fig_DEG_hist-1.png)<!-- -->
 
 
+[PDF](Fig/STEP3//Fig_DEG_hist.pdf)
 
 [**DOWNLOAD:** DEG MS vs HC](Tab/DEG_MS_vs_HC.txt.gz)
 
@@ -154,6 +155,8 @@ bulk.mTconv.dt <- read.bulk(.file)
 
 ![](Fig/STEP3/Fig_DEG_comparison_mTreg-1.png)<!-- -->
 
+[PDF](Fig/STEP3//Fig_DEG_comparison_mTreg.pdf)
+
 * Here, we computed correlation between the bulk and scRNA-seq results after selecting on the DEGs marginally significant in the bulk analysis ($|t| > 2$).
 
 * Two numbers below the marked genes: first, we show p-value of the bulk analysis; second, we show Bonferroni-adjusted p-values of the scRNA-seq analysis.
@@ -177,6 +180,8 @@ bulk.mTconv.dt <- read.bulk(.file)
 #### Correlation 0.19 with p-value = 6.79e-33
 
 ![](Fig/STEP3/Fig_DEG_comparison_mTconv-1.png)<!-- -->
+
+[PDF](Fig/STEP3//Fig_DEG_comparison_mTconv.pdf)
 
 * Here, we computed correlation between the bulk and scRNA-seq results after selecting on the DEGs marginally significant in the bulk analysis ($|t| > 2$).
 
@@ -227,6 +232,7 @@ print(plt)
 ![](Fig/STEP3/Fig_DEG_count-1.png)<!-- -->
 
 
+[PDF](Fig/STEP3//Fig_DEG_count.pdf)
 
 ## 2. Show genes with FWER $< 10^{-2}$ overlapping with the bulk DEGs
 
