@@ -2,7 +2,7 @@
 title: "Step 4: subtype analysis"
 author: Yongjin Park
 theme: jekyll-theme-minimal
-date: "2024-02-08"
+date: "`r Sys.Date()`"
 bibliography: "MS_Ref.bib"
 output:
   html_document:
@@ -11,13 +11,17 @@ output:
     self_contained: true
 ---
 
+```{r include = F}
+## unlink("result/step4",recursive = T)
+## unlink("Fig/STEP4",recursive = T)
+## unlink("Tab/step4*",recursive = T)
+```
 
 ```{r GlobOpt, include = FALSE}
 fig.dir = 'Fig/STEP4/'
 dir.create(fig.dir, recursive = TRUE, showWarnings = FALSE)
 knitr::opts_knit$set(eval.after = 'fig.cap')
 knitr::opts_chunk$set(warning = FALSE, message = FALSE, fig.path = fig.dir)
-knitr::opts_chunk$set(fig.width=8, fig.height=8)
 options(stringsAsFactors = FALSE)
 FIG.CAP = '**Fig.**'
 library(data.table)
@@ -32,25 +36,37 @@ source("Util-alg.R")
 
 ```{r echo = T}
 .markers <-
-    c("CD3", "CD3E", "CD14", "LYZ",
-      "CCR4","CCR6","CXCR3","CXCR5",
+    c("CCR4","CCR6","CXCR3","CXCR5",
       "ABCA1","GBP4","CDCA7L","ITM2C","NR1D1",
       "CTSH","GATA3","FHIT","CD40LG","C1orf162",
       "MGATA4A","GZMK","IFNGR2",
-      "CD183","CD184","CD185","CD196","CD195","CD194",
+      "CD183","CD185","CD196","CD194",
       "RORC", "TBX21", "HLADR", "CD74", "TCF7", "LEF1",
-      "SELL", "CCR7", "CCR8", "IKZF2", "TIGIT", "CD226",
-      "BATF", "ANXA2", "BRD9", "HPGD", "LMNA", "TNFRSF4",
-      "FOXP3", "FOXP1", "PDCD1", "CD279", "CTLA4", "LAG3",
-      "HAVCR2", "CD366", "KLRB1", "FOSL2", "S100A4", "GMAP7",
-      "JUN", "IL7R", "MYC", "IL32", "ISG20", "MALAT1",
-      "GSDMD", "HDAC1", "GIMAP4", "APOBEC3G", "CD2", "CD28", "CD6",
-      "CDKN2A", "CORO1A", "FAS", "FLI1", "GPR25", "MT2A", "KEAP1",
-      "IL12RB", "SIRT2", "TNFRSF14", "TRAF3IP3", "IRF2", "PSPH",
-      "CD278", "B2M", "RPS26", "MAP1S", "SGK1", "BACH2",
-      "HLA-C", "HLA-B", "HLA-E", "HLA-DR", "HLA-DRA", "HLA-DRB1",
-      "S1PR4", "KLF2", "SATB1", "TSC22D3", "IL2RA", "CD25") %>%
+      "CCR7", "CCR8", "IKZF2", "TIGIT", "LAG3",
+      "HAVCR2", "CD366", "KLRB1", "FOSL2", "SGK1", "BACH2",
+      "HLA-C", "HLA-B", "HLA-E", "HLA-DR", "HLA-DRA", "HLA-DRB1") %>%
     unique
+```
+
+```{r include = F}
+## "CD3", "CD3E", "CD14", "LYZ",
+##       "CCR4","CCR6","CXCR3","CXCR5",
+##       "ABCA1","GBP4","CDCA7L","ITM2C","NR1D1",
+##       "CTSH","GATA3","FHIT","CD40LG","C1orf162",
+##       "MGATA4A","GZMK","IFNGR2",
+##       "CD183","CD184","CD185","CD196","CD195","CD194",
+##       "RORC", "TBX21", "HLADR", "CD74", "TCF7", "LEF1",
+##       "SELL", "CCR7", "CCR8", "IKZF2", "TIGIT", "CD226",
+##       "BATF", "ANXA2", "BRD9", "HPGD", "LMNA", "TNFRSF4",
+##       "FOXP3", "FOXP1", "PDCD1", "CD279", "CTLA4", "LAG3",
+##       "HAVCR2", "CD366", "KLRB1", "FOSL2", "S100A4", "GMAP7",
+##       "JUN", "IL7R", "MYC", "IL32", "ISG20", "MALAT1",
+##       "GSDMD", "HDAC1", "GIMAP4", "APOBEC3G", "CD2", "CD28", "CD6",
+##       "CDKN2A", "CORO1A", "FAS", "FLI1", "GPR25", "MT2A", "KEAP1",
+##       "IL12RB", "SIRT2", "TNFRSF14", "TRAF3IP3", "IRF2", "PSPH",
+##       "CD278", "B2M", "RPS26", "MAP1S", "SGK1", "BACH2",
+##       "HLA-C", "HLA-B", "HLA-E", "HLA-DR", "HLA-DRA", "HLA-DRB1",
+##       "S1PR4", "KLF2", "SATB1", "TSC22D3", "IL2RA", "CD25")
 ```
 
 * Goal: Identify cellular states/subtypes in memory T cells
@@ -63,7 +79,6 @@ annot.dt <- fread("Tab/step2_cell_type.txt.gz") %>%
     left_join(.hash.info)
 ```
 
-
 ```{r include=FALSE}
 .sum.stat.batch <- function(.dt) {
     .dt %>%
@@ -71,6 +86,7 @@ annot.dt <- fread("Tab/step2_cell_type.txt.gz") %>%
         mutate(P = 100 * N/sum(N)) %>%
         arrange(desc(membership)) %>%
         mutate(Pc = cumsum(P)) %>%
+        mutate(Nc = cumsum(N)) %>%
         ungroup() %>%
         group_by(batch) %>%
         mutate(nb = sum(N)) %>%
@@ -83,25 +99,42 @@ annot.dt <- fread("Tab/step2_cell_type.txt.gz") %>%
         mutate(P = 100 * N/sum(N)) %>%
         arrange(desc(membership)) %>%
         mutate(Pc = cumsum(P)) %>%
+        mutate(Nc = cumsum(N)) %>%
         ungroup()
 }
-.plt.sum.stat <- function(.stat, .pal = "Set1") {
+.plt.sum.stat <- function(.stat, .cols = NULL, .pal = "Set1", show.prop=F) {
 
     K <- length(unique(.stat$membership))
 
-    .gg.plot(.stat, aes(x=disease, y=P, group=membership, fill=membership)) +
+    if(is.null(.cols)){
+        sc.fill <- scale_fill_manual(values=.more.colors(K, nc.pal=12, .palette=.pal))
+    } else {
+        sc.fill <- scale_fill_manual(values=.cols)
+    }
+
+    if(show.prop){
+        .aes <- aes(x=disease, y=`P`, group=membership, fill=membership)
+        .aes.p <- aes(y=Pc, label=num.int(N))
+        .ylab <- ylab("clustering membership (%)")
+    } else {
+        .aes <- aes(x=disease, y=`N`, group=membership, fill=membership)
+        .aes.p <- aes(y=Nc, label=round(P) %&% "%")
+        .ylab <- ylab("clustering membership (N)")
+    }
+
+    .gg.plot(.stat, .aes) +
         facet_grid(.~batch) +
-        geom_bar(stat="identity") +
-        geom_text(aes(y=Pc, label=num.int(N)), size=2) +
-        scale_fill_manual(values=.more.colors(K, nc.pal=12)) +
-        ylab("clustering membership (%)") +
+        geom_bar(stat="identity", linewidth=.1, color="black") +
+        geom_text(.aes.p, size=2) +
+        .ylab +
+        sc.fill +
         theme(legend.title=element_blank())
 }
 ```
 
 ## 1. Memory T conventional
 
-```{r}
+```{r take_mtconv_only_data}
 .full.data <- fileset.list("result/step1/final_matrix")
 .mkdir("result/step4/")
 .data <- fileset.list("result/step4/mtconv")
@@ -125,14 +158,14 @@ if.needed(.file, {
 
     .batches <- take.batch.info(.data)
 
-    .svd <- rcpp_mmutil_svd(.data$mtx, RANK=50, TAKE_LN=T, EM_ITER = 20, NUM_THREADS=16)
+    .svd <- rcpp_mmutil_svd(.data$mtx, RANK=30, TAKE_LN=T, EM_ITER = 20, NUM_THREADS=16)
 
     .bbknn <-
         rcpp_mmutil_bbknn(r_svd_u = .svd$U,
                           r_svd_v = .svd$V,
                           r_svd_d = .svd$D,
                           r_batches = .batches, # batch label
-                          knn = 50,             # 20 nn per batch
+                          knn = 50,             # 10 nn per batch
                           RECIPROCAL_MATCH = T, # crucial
                           NUM_THREADS = 16,
                           USE_SINGULAR_VALUES = T)
@@ -158,10 +191,11 @@ print(plt)
 ### A. Clustering cells by batch-balancing k-nearest neighbour graph
 
 ```{r run_leiden_mtconv}
+set.seed(1)
 .file <- "Tab/step4_mtconv_leiden.txt.gz"
 if.needed(.file, {
     .tags <- readLines(.data$col)
-    .leiden <- run.leiden(.bbknn$knn.adj, .tags, res=.7, nrepeat = 100, min.size = 100)
+    .leiden <- run.leiden(.bbknn$knn.adj, .tags, res=.3, nrepeat = 1000, min.size = 100)
     fwrite(.leiden, .file)
 })
 .leiden <- fread(.file)
@@ -180,7 +214,7 @@ if.needed(.file, {
                          n_epochs=3000,
                          n_sgd_threads=16,
                          verbose=T,
-                         init="pca")
+                         init="spectral")
 
     .tags <- readLines(.data$col)
 
@@ -241,7 +275,6 @@ marker.stat <- fread(.file, sep = "\t")
 [**DOWNLOAD:** mTconv marker gene statistics](Tab/step4_mtconv_gene_stat.txt.gz)
 
 
-
 ### C. Non-linear embedding to confirm the cell clusters of mTconv cells
 
 ```{r Fig_bbknn_mtconv, fig.width=6, fig.height=3}
@@ -258,19 +291,19 @@ marker.stat <- fread(.file, sep = "\t")
              tSNE2=median(tSNE2)),
            by = .(component, membership)]
 
-.cols <- .more.colors(nrow(.lab), nc.pal=8, .palette="Set1")
+mtconv.cols <- .more.colors(nrow(.lab), nc.pal=5, .palette="Set1")
 
 p1 <-
     .gg.plot(.cells, aes(UMAP1, UMAP2, color=as.factor(membership))) +
     ggrastr::rasterise(geom_point(stroke=0, alpha=.8, size=.7), dpi=300) +
     geom_text(aes(label=membership), data=.lab, size=4, color="black") +
-    scale_color_manual(values = .cols, guide="none")
+    scale_color_manual(values = mtconv.cols, guide="none")
 
 p2 <-
     .gg.plot(.cells, aes(tSNE1, tSNE2, color=as.factor(membership))) +
     ggrastr::rasterise(geom_point(stroke=0, alpha=.8, size=.7), dpi=300) +
     geom_text(aes(label=membership), data=.lab, size=4, color="black") +
-    scale_color_manual(values = .cols, guide="none")
+    scale_color_manual(values = mtconv.cols, guide="none")
 
 plt <- p1 | p2
 print(plt)
@@ -281,13 +314,11 @@ print(plt)
 .gg.save(filename = .file, plot = plt, width=6, height=3)
 ```
 
-
 ##### Confirm batch/individual-specific effects
 
-**NOTE: Normalized expressions across cells within the same major cell type!**
-
-```{r Fig_bbknn_mtconv_sub, fig.width=6, fig.height=3}
-.cols <- .more.colors(10, nc.pal=7, .palette="Set1")
+```{r Fig_bbknn_mtconv_sub, fig.width=6, fig.height=6}
+nn <- length(unique(.cells$subject))
+.cols <- .more.colors(nn, nc.pal=7, .palette="Set2")
 
 p1 <-
     .gg.plot(.cells, aes(UMAP1, UMAP2, color=as.factor(subject))) +
@@ -301,23 +332,41 @@ p2 <-
     ggrastr::rasterise(geom_point(stroke=0, alpha=.8, size=.7), dpi=300) +
     scale_color_manual(values = .cols, guide="none")
 
-plt <- p1 | p2
+p3 <-
+    .gg.plot(.cells, aes(UMAP1, UMAP2, color=as.factor(disease))) +
+    xlab("UMAP1") + ylab("UMAP2") +
+    ggrastr::rasterise(geom_point(stroke=0, alpha=.8, size=.7), dpi=300) +
+    scale_color_brewer("", palette = "Set1", guide="none")
+
+p4 <-
+    .gg.plot(.cells, aes(UMAP1, UMAP2, color=as.factor(disease))) +
+    xlab("UMAP1") + ylab("UMAP2") +
+    ggrastr::rasterise(geom_point(stroke=0, alpha=.8, size=.7), dpi=300) +
+    scale_color_brewer("", palette = "Set1", guide="none")
+
+plt <- (p1 | p2)/(p3 | p4)
 print(plt)
 ```
 
 ```{r results="asis", echo = F}
 .file <- fig.dir %&% "/Fig_bbknn_mtconv_sub.pdf"
-.gg.save(filename = .file, plot = plt, width=6, height=3)
+.gg.save(filename = .file, plot = plt, width=6, height=6)
 ```
 
+### D. Summary heatmap
+
+**NOTE** The colors are standardized `log1p` expression across genes and cells.
+
 ```{r select_mtconv_marker_genes}
+.cells <- .leiden %>%
+    left_join(.hash.info)
 x.melt <- bbknn.x.melt(.data, .bbknn, .markers)
 .dt <- x.melt %>% left_join(.cells) %>% na.omit()
 .sum.subj <- .dt[, .(x = median(x)), by = .(gene, subject, membership)]
 .sum.subj[, x := scale(x), by = .(gene)]
 ```
 
-```{r Fig_mtconv_sum_membership, fig.width=1.8, fig.height=6.5}
+```{r Fig_mtconv_sum_membership, fig.width=1.8, fig.height=5}
 .sum <-
     .sum.subj[, .(x = median(x)), by = .(gene, membership)] %>%
     mutate(col = `gene`, row = membership, weight = x) %>%
@@ -336,7 +385,7 @@ print(plt)
 
 ```{r results="asis", echo=F}
 .file <- fig.dir %&% "/Fig_mtconv_sum_membership.pdf"
-.gg.save(filename = .file, plot = plt, width=1.8, height=6.5)
+.gg.save(filename = .file, plot = plt, width=1.8, height=5)
 ```
 
 
@@ -345,7 +394,7 @@ print(plt)
 ```
 
 
-```{r Fig_mtconv_sum_subj_member, fig.width=5, fig.height=6.5}
+```{r Fig_mtconv_sum_subj_member, fig.width=5, fig.height=5}
 .dt <- copy(.sum.subj) %>%
     mutate(gene = factor(`gene`, .marker.order)) %>%
     mutate(t = subject %&% "." %&% membership)
@@ -366,58 +415,12 @@ print(plt)
 
 ```{r results="asis", echo=F}
 .file <- fig.dir %&% "/Fig_mtconv_sum_subj_member.pdf"
-.gg.save(filename = .file, plot = plt, width=5, height=6.5)
-```
-
-#### UMAP for each marker gene (normalized expression)
-
-```{r Fig_mtconv_gene_umap, fig.width=3, fig.height=2.5, results="asis"}
-.mkdir(fig.dir %&% "/example/")
-for(g in unique(x.melt$gene)) {
-    .dt <- left_join(x.melt[gene == g], .cells)
-    .aes <- aes(UMAP1, UMAP2, color=pmax(pmin(x, 3), -3))
-
-    plt <-
-        .gg.plot(.dt[order(`x`)], .aes) +
-        xlab("UMAP1") + ylab("UMAP2") +
-        ggrastr::rasterise(geom_point(stroke = 0, size=.7), dpi=300) +
-        theme(legend.key.width = unit(.2,"lines")) +
-        theme(legend.key.height = unit(.5,"lines")) +
-        scale_color_distiller(g, palette = "RdBu", direction = -1) +
-        ggtitle(g)
-
-    .file <- fig.dir %&% "/example/Fig_mtconv_gene_umap_" %&% g %&% ".pdf"
-    .gg.save(filename = .file, plot = plt, width=3, height=2.5, cat.link = F)
-    cat("[" %&% g %&% "](" %&% .file %&% ") ")
-}
-```
-
-#### tSNE for each marker gene (normalized expression)
-
-```{r Fig_mtconv_gene_tsne, fig.width=3, fig.height=2.5, results="asis"}
-.mkdir(fig.dir %&% "/example/")
-for(g in unique(x.melt$gene)) {
-    .dt <- left_join(x.melt[gene == g], .cells)
-    .aes <- aes(tSNE1, tSNE2, color=pmax(pmin(x, 3), -3))
-
-    plt <-
-        .gg.plot(.dt[order(`x`)], .aes) +
-        xlab("TSNE1") + ylab("TSNE2") +
-        ggrastr::rasterise(geom_point(stroke = 0, size=.7), dpi=300) +
-        theme(legend.key.width = unit(.2,"lines")) +
-        theme(legend.key.height = unit(.5,"lines")) +
-        scale_color_distiller(g, palette = "RdBu", direction = -1) +
-        ggtitle(g)
-
-    .file <- fig.dir %&% "/example/Fig_mtconv_gene_tsne_" %&% g %&% ".pdf"
-    .gg.save(filename = .file, plot = plt, width=3, height=2.5, cat.link = F)
-    cat("[" %&% g %&% "](" %&% .file %&% ") ")
-}
+.gg.save(filename = .file, plot = plt, width=5, height=5)
 ```
 
 ### E. Basic statistics
 
-```{r Fig_count_mtconv_tot, fig.width=6, fig.height=3}
+```{r Fig_count_mtconv_prop, fig.width=6, fig.height=3}
 .stat <-
     .cells[,
            .(N = .N),
@@ -425,7 +428,17 @@ for(g in unique(x.melt$gene)) {
     mutate(membership = as.factor(membership)) %>% 
     .sum.stat.batch()
 
-plt <- .plt.sum.stat(.stat) + ggtitle("mTconv")
+plt <- .plt.sum.stat(.stat, .cols=mtconv.cols, show.prop = T) + ggtitle("mTconv")
+print(plt)
+```
+
+```{r echo = FALSE, results="asis"}
+.file <- fig.dir %&% "/Fig_count_mtconv_prop.pdf"
+.gg.save(filename = .file, plot = plt, width=6, height=3)
+```
+
+```{r Fig_count_mtconv_tot, fig.width=6, fig.height=3}
+plt <- .plt.sum.stat(.stat, .cols=mtconv.cols, show.prop = F) + ggtitle("mTconv")
 print(plt)
 ```
 
@@ -434,7 +447,7 @@ print(plt)
 .gg.save(filename = .file, plot = plt, width=6, height=3)
 ```
 
-```{r Fig_count_merged_mtconv_tot, fig.width=2, fig.height=3}
+```{r Fig_count_merged_mtconv_prop, fig.width=2, fig.height=3}
 .stat.tot <-
     .cells[,
            .(N = .N),
@@ -443,7 +456,17 @@ print(plt)
     .sum.stat.tot() %>%
     mutate(batch = "(N=" %&% num.int(sum(.stat$N)) %&% ")")
 
-plt <- .plt.sum.stat(.stat.tot) + ggtitle("mTconv")
+plt <- .plt.sum.stat(.stat.tot, .cols=mtconv.cols, show.prop = T) + ggtitle("mTconv")
+print(plt)
+```
+
+```{r echo = FALSE, results="asis"}
+.file <- fig.dir %&% "/Fig_count_merged_mtconv_prop.pdf"
+.gg.save(filename = .file, plot = plt, width=2, height=3)
+```
+
+```{r Fig_count_merged_mtconv_tot, fig.width=2, fig.height=3}
+plt <- .plt.sum.stat(.stat.tot, .cols=mtconv.cols, show.prop = F) + ggtitle("mTconv")
 print(plt)
 ```
 
@@ -528,7 +551,6 @@ plt <- diagnostic.density.kmeans(.data, .kmeans)
 print(plt)
 ```
 
-
 ```{r remove_mtreg_outlier_cells, echo = F}
 .mtreg.qc.hdr <- "result/step4/qc_mtreg"
 .mtreg.qc.data <- fileset.list(.mtreg.qc.hdr)
@@ -549,7 +571,7 @@ if.needed(.mtreg.qc.data, {
 .file <- "result/step4/qc_mtreg_svd.rds"
 
 if.needed(.file, {
-    mtreg.svd <- rcpp_mmutil_svd(.mtreg.qc.data$mtx, RANK=50, TAKE_LN=T,
+    mtreg.svd <- rcpp_mmutil_svd(.mtreg.qc.data$mtx, RANK=30, TAKE_LN=T,
                                 NUM_THREADS = 16, EM_ITER = 20)
     saveRDS(mtreg.svd, .file)
 })
@@ -559,6 +581,11 @@ V <- mtreg.svd$V; rownames(V) <- readLines(.mtreg.qc.data$col)
 plots <- lapply(1:9, pca.plot.vd, VD = pca.df(V))
 plt <- wrap_plots(plots, ncol = 3)
 print(plt)
+```
+
+```{r echo=F, results="asis"}
+.file <- fig.dir %&% "/Fig_svd_batch_mtreg.pdf"
+.gg.save(filename = .file, plot = plt, width=9, height=9)
 ```
 
 ```{r}
@@ -573,15 +600,14 @@ print(plt)
 if.needed(.file, {
 
     .batches <- take.batch.info(.data)
-
-    .svd <- rcpp_mmutil_svd(.data$mtx, RANK=50, TAKE_LN=T, EM_ITER = 20, NUM_THREADS=16)
+    .svd <- mtreg.svd
 
     .bbknn <-
         rcpp_mmutil_bbknn(r_svd_u = .svd$U,
                           r_svd_v = .svd$V,
                           r_svd_d = .svd$D,
                           r_batches = .batches, # batch label
-                          knn = 50,             # 20 nn per batch
+                          knn = 50,             # 10 nn per batch
                           RECIPROCAL_MATCH = T, # crucial
                           NUM_THREADS = 16,
                           USE_SINGULAR_VALUES = T)
@@ -591,55 +617,16 @@ if.needed(.file, {
 .bbknn <- readRDS(.file)
 ```
 
-
-```{r echo=F, results="asis"}
-.file <- fig.dir %&% "/Fig_svd_batch_mtreg.pdf"
-.gg.save(filename = .file, plot = plt, width=9, height=9)
-```
-
 ### A. Clustering cells by batch-balancing k-nearest neighbour graph
 
 ```{r run_leiden_mtreg}
-.file <- "Tab/step4_mtreg_leiden_raw.txt.gz"
-if.needed(.file, {
-    .tags <- readLines(.data$col)
-    .leiden.raw <- run.leiden(.bbknn$knn.adj, .tags, res=.5, nrepeat = 100, min.size = 100)
-    fwrite(.leiden.raw, .file)
-})
-.leiden.raw <- fread(.file)
-```
-
-
-```{r include = F}
-qc.leiden <- function(.leiden.raw, .cutoff = .75){
-
-    .dt <- .leiden.raw %>% as.data.table() %>% parse.tag()
-
-    .remove <-
-        .dt %>%
-        group_by(membership, component, batch) %>%
-        count() %>% 
-        ungroup() %>% 
-        group_by(membership, component) %>%
-        mutate(n.tot = sum(`n`)) %>% 
-        ungroup() %>%
-        filter(`n`/`n.tot` > .75) %>%
-        select(membership, component)
-
-    ret <-
-        anti_join(.leiden.raw, .remove) %>%
-        as.data.table()
-    return(ret)
-}
-```
-
-```{r leiden_qc_mtreg}
 .file <- "Tab/step4_mtreg_leiden.txt.gz"
 if.needed(.file, {
-    .leiden <- qc.leiden(.leiden.raw, .cutoff = .75)
+    .tags <- readLines(.data$col)
+    .leiden <- run.leiden(.bbknn$knn.adj, .tags, res=.3, nrepeat = 1000, min.size = 100)
     fwrite(.leiden, .file)
 })
-.leiden <- fread(.file)    
+.leiden <- fread(.file)
 ```
 
 [**DOWNLOAD:** mtreg Leiden results](Tab/step4_mtreg_leiden.txt.gz)
@@ -655,7 +642,7 @@ if.needed(.file, {
                          n_epochs=3000,
                          n_sgd_threads=16,
                          verbose=T,
-                         init="pca")
+                         init="lvrandom")
 
     .tags <- readLines(.data$col)
 
@@ -704,7 +691,6 @@ cat("[**DOWNLOAD:** mtreg tSNE results]("%&% .file %&% ")\n\n")
 ```
 
 
-
 ### B. What are the cell-cluster-specific marker genes?
 
 ```{r find_mtreg_marker_genes}
@@ -739,19 +725,20 @@ cat("[**DOWNLOAD:** mTreg marker gene statistics]("%&% .file %&% ")\n\n")
              tSNE2=median(tSNE2)),
            by = .(component, membership)]
 
-.cols <- .more.colors(nrow(.lab), nc.pal=12)
+K <- nrow(.lab)
+mtreg.cols <- .more.colors(K, nc.pal=min(K, 5), .palette="Accent")
 
 p1 <-
     .gg.plot(.cells, aes(UMAP1, UMAP2, color=as.factor(membership))) +
     ggrastr::rasterise(geom_point(stroke=0, alpha=.8, size=.7), dpi=300) +
     geom_text(aes(label=membership), data=.lab, size=4, color="black") +
-    scale_color_manual(values = .cols, guide="none")
+    scale_color_manual(values = mtreg.cols, guide="none")
 
 p2 <-
     .gg.plot(.cells, aes(tSNE1, tSNE2, color=as.factor(membership))) +
     ggrastr::rasterise(geom_point(stroke=0, alpha=.8, size=.7), dpi=300) +
     geom_text(aes(label=membership), data=.lab, size=4, color="black") +
-    scale_color_manual(values = .cols, guide="none")
+    scale_color_manual(values = mtreg.cols, guide="none")
 
 plt <- p1 | p2
 print(plt)
@@ -764,8 +751,9 @@ print(plt)
 
 ##### Confirm batch/individual-specific effects
 
-```{r Fig_bbknn_mtreg_sub, fig.width=6, fig.height=3}
-.cols <- .more.colors(10, nc.pal=7, .palette="Set1")
+```{r Fig_bbknn_mtreg_sub, fig.width=6, fig.height=6}
+nn <- length(unique(.cells$subject))
+.cols <- .more.colors(nn, nc.pal=5, .palette="Set1")
 
 p1 <-
     .gg.plot(.cells, aes(UMAP1, UMAP2, color=as.factor(subject))) +
@@ -779,13 +767,25 @@ p2 <-
     ggrastr::rasterise(geom_point(stroke=0, alpha=.8, size=.7), dpi=300) +
     scale_color_manual(values = .cols, guide="none")
 
-plt <- p1 | p2
+p3 <-
+    .gg.plot(.cells, aes(UMAP1, UMAP2, color=as.factor(disease))) +
+    xlab("UMAP1") + ylab("UMAP2") +
+    ggrastr::rasterise(geom_point(stroke=0, alpha=.8, size=.7), dpi=300) +
+    scale_color_brewer("", palette = "Set1", guide="none")
+
+p4 <-
+    .gg.plot(.cells, aes(UMAP1, UMAP2, color=as.factor(disease))) +
+    xlab("UMAP1") + ylab("UMAP2") +
+    ggrastr::rasterise(geom_point(stroke=0, alpha=.8, size=.7), dpi=300) +
+    scale_color_brewer("", palette = "Set1", guide="none")
+
+plt <- (p1 | p2)/(p3 | p4)
 print(plt)
 ```
 
 ```{r results="asis", echo = F}
 .file <- fig.dir %&% "/Fig_bbknn_mtreg_sub.pdf"
-.gg.save(filename = .file, plot = plt, width=6, height=3)
+.gg.save(filename = .file, plot = plt, width=6, height=6)
 ```
 
 ### D. Summary heatmap
@@ -793,13 +793,14 @@ print(plt)
 **NOTE** The colors are standardized `log1p` expression across genes and cells.
 
 ```{r select_mtreg_marker_genes}
+.cells <- .leiden %>% left_join(.hash.info)
 x.melt <- bbknn.x.melt(.data, .bbknn, .markers)
 .dt <- x.melt %>% left_join(.cells) %>% na.omit()
 .sum.subj <- .dt[, .(x = median(x)), by = .(gene, subject, membership)]
 .sum.subj[, x := scale(x), by = .(gene)]
 ```
 
-```{r Fig_mtreg_sum_membership, fig.width=3, fig.height=6.5}
+```{r Fig_mtreg_sum_membership, fig.width=1.8, fig.height=5}
 .sum <-
     .sum.subj[, .(x = median(x)), by = .(gene, membership)] %>%
     mutate(col = `gene`, row = membership, weight = x) %>%
@@ -818,14 +819,14 @@ print(plt)
 
 ```{r results="asis", echo=F}
 .file <- fig.dir %&% "/Fig_mtreg_sum_membership.pdf"
-.gg.save(filename = .file, plot = plt, width=3, height=6)
+.gg.save(filename = .file, plot = plt, width=1.8, height=5)
 ```
 
 ```{r include = F}
 .marker.order <- sort(unique(.sum$col))
 ```
 
-```{r Fig_mtreg_sum_subj_member, fig.width=6, fig.height=6.5}
+```{r Fig_mtreg_sum_subj_member, fig.width=5, fig.height=5}
 .dt <- copy(.sum.subj) %>%
     mutate(gene = factor(`gene`, .marker.order)) %>%
     mutate(t = subject %&% "." %&% membership)
@@ -846,59 +847,13 @@ print(plt)
 
 ```{r results="asis", echo=F}
 .file <- fig.dir %&% "/Fig_mtreg_sum_subj_member.pdf"
-.gg.save(filename = .file, plot = plt, width=6, height=6.5)
+.gg.save(filename = .file, plot = plt, width=6, height=5)
 ```
 
-
-#### UMAP for each marker gene
-
-```{r Fig_mtreg_gene_umap, fig.width=3, fig.height=2.5, results="asis"}
-.mkdir(fig.dir %&% "/example/")
-for(g in unique(x.melt$gene)) {
-    .dt <- left_join(x.melt[gene == g], .cells)
-    .aes <- aes(UMAP1, UMAP2, color=pmax(pmin(x, 3), -3))
-
-    plt <-
-        .gg.plot(.dt[order(`x`)], .aes) +
-        xlab("UMAP1") + ylab("UMAP2") +
-        ggrastr::rasterise(geom_point(stroke = 0, size=.7), dpi=300) +
-        theme(legend.key.width = unit(.2,"lines")) +
-        theme(legend.key.height = unit(.5,"lines")) +
-        scale_color_distiller(g, palette = "RdBu", direction = -1) +
-        ggtitle(g)
-
-    .file <- fig.dir %&% "/example/Fig_mtreg_gene_umap_" %&% g %&% ".pdf"
-    .gg.save(filename = .file, plot = plt, width=3, height=2.5, cat.link = F)
-    cat("[" %&% g %&% "](" %&% .file %&% ") ")
-}
-```
-
-#### tSNE for each marker gene
-
-```{r Fig_mtreg_gene_tsne, fig.width=3, fig.height=2.5, results="asis"}
-.mkdir(fig.dir %&% "/example/")
-for(g in unique(x.melt$gene)) {
-    .dt <- left_join(x.melt[gene == g], .cells)
-    .aes <- aes(tSNE1, tSNE2, color=pmax(pmin(x, 3), -3))
-
-    plt <-
-        .gg.plot(.dt[order(`x`)], .aes) +
-        xlab("TSNE1") + ylab("TSNE2") +
-        ggrastr::rasterise(geom_point(stroke = 0, size=.7), dpi=300) +
-        theme(legend.key.width = unit(.2,"lines")) +
-        theme(legend.key.height = unit(.5,"lines")) +
-        scale_color_distiller(g, palette = "RdBu", direction = -1) +
-        ggtitle(g)
-
-    .file <- fig.dir %&% "/example/Fig_mtreg_gene_tsne_" %&% g %&% ".pdf"
-    .gg.save(filename = .file, plot = plt, width=3, height=2.5, cat.link = F)
-    cat("[" %&% g %&% "](" %&% .file %&% ") ")
-}
-```
 
 ### E. Basic statistics
 
-```{r Fig_count_mtreg_tot, fig.width=6, fig.height=3}
+```{r Fig_count_mtreg_prop, fig.width=6, fig.height=3}
 .stat <-
     .cells[,
            .(N = .N),
@@ -906,16 +861,26 @@ for(g in unique(x.melt$gene)) {
     mutate(membership = as.factor(membership)) %>% 
     .sum.stat.batch()
 
-plt <- .plt.sum.stat(.stat) + ggtitle("mtreg")
+plt <- .plt.sum.stat(.stat, .cols=mtreg.cols, show.prop = T) + ggtitle("mtreg")
+print(plt)
+```
+
+```{r echo = FALSE, results="asis"}
+.file <- fig.dir %&% "/Fig_count_mtreg_prop.pdf"
+.gg.save(filename = .file, plot = plt, width=6, height=3)
+```
+
+```{r Fig_count_mtreg_tot, fig.width=6, fig.height=3}
+plt <- .plt.sum.stat(.stat, .cols=mtreg.cols, show.prop = F) + ggtitle("mtreg")
 print(plt)
 ```
 
 ```{r echo = FALSE, results="asis"}
 .file <- fig.dir %&% "/Fig_count_mtreg_tot.pdf"
-.gg.save(filename = .file, plot = plt, height=3, width=6)
+.gg.save(filename = .file, plot = plt, width=6, height=3)
 ```
 
-```{r Fig_count_merged_mtreg_tot, fig.width=2, fig.height=3}
+```{r Fig_count_merged_mtreg_prop, fig.width=2, fig.height=3}
 .stat.tot <-
     .cells[,
            .(N = .N),
@@ -924,7 +889,17 @@ print(plt)
     .sum.stat.tot() %>%
     mutate(batch = "(N=" %&% num.int(sum(.stat$N)) %&% ")")
 
-plt <- .plt.sum.stat(.stat.tot) + ggtitle("mtreg")
+plt <- .plt.sum.stat(.stat.tot, .cols=mtreg.cols, show.prop = T) + ggtitle("mtreg")
+print(plt)
+```
+
+```{r echo = FALSE, results="asis"}
+.file <- fig.dir %&% "/Fig_count_merged_mtreg_prop.pdf"
+.gg.save(filename = .file, plot = plt, width=2, height=3)
+```
+
+```{r Fig_count_merged_mtreg_tot, fig.width=2, fig.height=3}
+plt <- .plt.sum.stat(.stat.tot, .cols=mtreg.cols, show.prop = F) + ggtitle("mtreg")
 print(plt)
 ```
 
@@ -932,4 +907,3 @@ print(plt)
 .file <- fig.dir %&% "/Fig_count_merged_mtreg_tot.pdf"
 .gg.save(filename = .file, plot = plt, width=2, height=3)
 ```
-

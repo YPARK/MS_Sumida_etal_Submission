@@ -40,6 +40,11 @@ source("Util-alg.R")
 ```{r}
 .hdr <- "result/step1/final_matrix"
 .data <- fileset.list(.hdr)
+
+.hash.hdr <- "result/step1/hash"
+.hash.data <- fileset.list(.hash.hdr)
+.hash.info <- read.hash(.hash.data) %>%
+    dplyr::select(-hash)
 ```
 
 ## 0. Surface Marker Proteins
@@ -179,6 +184,7 @@ if.needed(.file, {
 })
 umap.dt <- fread(.file) %>% 
     left_join(final.cell.type) %>% 
+    left_join(.hash.info) %>% 
     na.omit()
 ```
 
@@ -197,12 +203,13 @@ if.needed(.file, {
 })
 tsne.dt <- fread(.file) %>%
     left_join(final.cell.type) %>%
+    left_join(.hash.info) %>% 
     na.omit()
 ```
 
 ### t-UMAP
 
-```{r Fig_umap_celltype, fig.width=9, fig.height=5}
+```{r Fig_umap_celltype, fig.width=12, fig.height=5}
 p1 <- .gg.plot(umap.dt[sample(.N)], aes(UMAP1, UMAP2, color=celltype)) +
     ggrastr::rasterise(geom_point(stroke = 0, size=1), dpi=300) +
     theme(legend.position = c(0,0), legend.justification = c(0,0)) +
@@ -221,19 +228,25 @@ p3 <- .gg.plot(umap.dt[sample(.N)], aes(UMAP1, UMAP2, color=as.factor(membership
     ggtitle("clustering") +
     scale_color_brewer("", palette = "Set1")
 
-plt <- p1 | p2 | p3
+p4 <- .gg.plot(umap.dt[sample(.N)], aes(UMAP1, UMAP2, color=as.factor(disease))) +
+    ggrastr::rasterise(geom_point(stroke = 0, size=1), dpi=300) +
+    theme(legend.position = c(0,0), legend.justification = c(0,0)) +
+    ggtitle("clustering") +
+    scale_color_brewer("", palette = "Dark2")
+
+plt <- p1 | p2 | p3 | p4
 print(plt)
 ```
 
 
 ```{r results="asis", echo=F}
 .file <- fig.dir %&% "/Fig_umap_celltype.pdf"
-.gg.save(filename = .file, plot = plt, width=9, height=5)
+.gg.save(filename = .file, plot = plt, width=12, height=5)
 ```
 
 ### tSNE
 
-```{r Fig_tsne_celltype, fig.width=9, fig.height=3}
+```{r Fig_tsne_celltype, fig.width=12, fig.height=3}
 p1 <-
     .gg.plot(tsne.dt[sample(.N)], aes(tSNE1, tSNE2, color=celltype)) +
     ggrastr::rasterise(geom_point(stroke = 0, size=1), dpi=300) +
@@ -255,13 +268,20 @@ p3 <-
     ggtitle("clustering") +
     scale_color_brewer("", palette = "Set1")
 
-plt <- p1 | p2 | p3
+p4 <-
+    .gg.plot(tsne.dt[sample(.N)], aes(tSNE1, tSNE2, color=disease)) +
+    ggrastr::rasterise(geom_point(stroke = 0, size=1), dpi=300) +
+    theme(legend.position = c(0,0), legend.justification = c(0,0)) +
+    ggtitle("clustering") +
+    scale_color_brewer("", palette = "Dark2")
+
+plt <- p1 | p2 | p3 | p4
 print(plt)
 ```
 
 ```{r results="asis", echo=F}
 .file <- fig.dir %&% "/Fig_tsne_celltype.pdf"
-.gg.save(filename = .file, plot = plt, width=9, height=3)
+.gg.save(filename = .file, plot = plt, width=12, height=3)
 ```
 
 ## 3. Confirm cell type assignment with raw surface marker proteins
@@ -422,12 +442,6 @@ for(g in .markers){
         ylab("cell type composition (%)") +
         theme(legend.title=element_blank())
 }
-```
-
-```{r}
-.hash.hdr <- "result/step1/hash"
-.hash.data <- fileset.list(.hash.hdr)
-.hash.info <- read.hash(.hash.data)
 ```
 
 ```{r Fig_count_stat_tot, fig.height=3, fig.width=6, echo = FALSE, results="asis"}

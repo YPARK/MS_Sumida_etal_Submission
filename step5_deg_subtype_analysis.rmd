@@ -10,6 +10,13 @@ output:
     self_contained: true
 ---
 
+
+```{r include = F}
+## unlink("result/step5",recursive = T)
+## unlink("Fig/STEP5",recursive = T)
+## unlink("Tab/DEG_mt*",recursive = T)
+```
+
 ```{r GlobOpt, include=FALSE}
 fig.dir = 'Fig/STEP5/'
 knitr::opts_knit$set(eval.after = 'fig.cap')
@@ -17,24 +24,21 @@ knitr::opts_chunk$set(warning = FALSE, message = FALSE, fig.path = fig.dir)
 knitr::opts_chunk$set(fig.width=8, fig.height=8)
 options(stringsAsFactors = FALSE)
 FIG.CAP = '**Fig.**'
-
 library(tidyverse)
 library(data.table)
 library(patchwork)
 library(mmutilR)
+library(kableExtra)
 source("Util-rmd.R")
 source("Util-alg.R")
 .mkdir(fig.dir)
-```
-
-```{r include = F}
-library(kableExtra)
 ```
 
 ```{r read_hash}
 .hash.hdr <- "result/step1/hash"
 .hash.data <- fileset.list(.hash.hdr)
 .hash.info <- read.hash(.hash.data)
+.mkdir("result/step5/deg/")
 ```
 
 ```{r include = F}
@@ -118,12 +122,59 @@ summarize.deg <- function(.dt, tot.cutoff = 3, disease.name = "MS", control.name
         }) %>%
         mutate(z = ADE/ADE.se) %>%
         mutate(pv = 2 * pnorm(abs(z), lower.tail=FALSE)) %>%
+        group_by(membership) %>% 
         mutate(fwer = p.adjust(pv, "holm")) %>%
         mutate(fdr = p.adjust(pv, "fdr")) %>%
+        ungroup() %>% 
         as.data.table
 
     left_join(ADE.dt, ADD.dt) %>% left_join(ADC.dt) %>% as.data.table
 }
+
+format.deg.tab <- function(deg.tab, fig.hdr){
+
+    .deg.cast <- function(.dt, .var, .fun = mean){
+        .dt %>%
+            mutate(k = .var %&% "_" %&% membership) %>% 
+            dcast(ensembl_gene_id + hgnc_symbol ~ k,
+                  value.var = .var,
+                  fun.aggregate=.fun)
+    }
+
+    ret <-
+        .deg.cast(deg.tab, "z", .fun = function(x) num.round(mean(x,na.rm=T))) %>%
+        left_join(.deg.cast(deg.tab, "pv", .fun = function(x) num.sci(min(x,na.rm=T)))) %>% 
+        left_join(.deg.cast(deg.tab, "fdr", .fun = function(x) num.sci(min(x,na.rm=T)))) %>% 
+        as.data.table()
+
+    ret[, .file := fig.hdr %&%
+              ensembl_gene_id %&% "_" %&%
+              hgnc_symbol %&% ".pdf"]
+
+    ret[, .link := "[PDF](" %&% .file %&% ") "]
+    ret[, .file := NULL]
+
+    ret[!str_starts(ensembl_gene_id, "ENSG"), ensembl_gene_id := ""]
+
+    return(ret)
+}
+```
+
+```{r major_level_deg}
+major.deg.tab <- fread("Tab/DEG_MS_vs_HC.txt.gz")
+```
+
+```{r read_bulk_deg_results}
+## read.bulk <- function(.file) {
+##     fread(.file) %>%
+##         rename(hgnc_symbol = gene_name) %>%
+##         rename(bulk.t = t, bulk.pv = P.Value, bulk.qv = adj.P.Val) %>%
+##         dplyr::select(hgnc_symbol, starts_with("bulk"))
+## }
+## .file <- "data/DEG/20180513/deg.ms.hc.treg.mem.exvivo.sex_covar.ruv.txt"
+## bulk.mTreg.dt <- read.bulk(.file)
+## .file <- "data/DEG/20180513/deg.ms.hc.teff.mem.exvivo.sex_covar.ruv.txt"
+## bulk.mTconv.dt <- read.bulk(.file)
 ```
 
 # 1. mTconv subtype DEG analysis
@@ -137,7 +188,6 @@ annot.dt <-
 
 ```{r mtconv_estimate_deg_stat}
 .data <- fileset.list("result/step1/final_matrix")
-.mkdir("result/step5/deg/")
 .deg.data <- fileset.list("result/step5/deg/mtconv_hc_ms")
 
 if.needed(.deg.data, {
@@ -195,8 +245,9 @@ if.needed(.file, {
     as.data.table()
 
 hc.ms.deg <-
-    summarize.deg(.hc.ms.dt, tot.cutoff = 10) %>%
-    parse.gene()
+    summarize.deg(.hc.ms.dt, tot.cutoff = 5) %>%
+    parse.gene() %>%
+    as.data.table()
 ```
 
 ```{r mtconv_ms_vs_hc_results, results="asis", echo = FALSE}
@@ -209,16 +260,16 @@ if.needed(.file, {
 cat("[**DOWNLOAD:** mTconv DEG MS vs HC]("%&% .file %&% ")\n\n")
 ```
 
-### Found `r num.int(nrow(unique(hc.ms.deg[fdr < .05, .(gene)])))` unique genes strongly perturbed by MS with FDR 5%
+### Found `r num.int(nrow(unique(hc.ms.deg[fdr < .1, .(gene)])))` unique genes strongly perturbed by MS with FDR 10%
 
-* Up-regulated: `r num.int(nrow(unique(hc.ms.deg[fdr < .05 & z > 0, .(gene)])))`
+* Up-regulated: `r num.int(nrow(unique(hc.ms.deg[fdr < .1 & z > 0, .(gene)])))`
 
-* Down-regulated:  `r num.int(nrow(unique(hc.ms.deg[fdr < .05 & z < 0, .(gene)])))`
+* Down-regulated:  `r num.int(nrow(unique(hc.ms.deg[fdr < .1 & z < 0, .(gene)])))`
 
 * Total pairs of genes and clusters: `r num.int(nrow(hc.ms.deg))`
 
 ```{r}
-count.deg <- function(.dt, fdr.cutoff = .05) {
+count.deg <- function(.dt, fdr.cutoff = .1) {
     .dt[fdr < fdr.cutoff &
         sign(ADD) == sign(ADE) &
         sign(ADC) == sign(ADE),
@@ -355,65 +406,40 @@ show.each.gene <- function(g, .data, .stat, .cutoff = 3) {
 }
 ```
 
-```{r read_bulk_deg_results}
-read.bulk <- function(.file) {
-    fread(.file) %>%
-        rename(hgnc_symbol = gene_name) %>%
-        rename(bulk.t = t, bulk.pv = P.Value, bulk.qv = adj.P.Val) %>%
-        dplyr::select(hgnc_symbol, starts_with("bulk"))
-}
-
-.file <- "data/DEG/20180513/deg.ms.hc.treg.mem.exvivo.sex_covar.ruv.txt"
-bulk.mTreg.dt <- read.bulk(.file)
-
-.file <- "data/DEG/20180513/deg.ms.hc.teff.mem.exvivo.sex_covar.ruv.txt"
-bulk.mTconv.dt <- read.bulk(.file)
-```
-
 ```{r}
-.bulk.genes <-
-    bulk.mTconv.dt[bulk.qv < .2, .(hgnc_symbol)] %>% 
-    unique() %>%
-    unlist()
-
 hc.ms.deg[, c("ensembl_gene_id", "hgnc_symbol") := tstrsplit(`gene`, split="_")]
 
+major.deg <- major.deg.tab[fwer < .05]$hgnc_symbol
+
 .genes.show <-
-    hc.ms.deg[fdr < 0.05 &
-              hgnc_symbol %in% .bulk.genes &
+    hc.ms.deg[hgnc_symbol %in% major.deg &
               sign(ADD) == sign(ADE) &
               sign(ADC) == sign(ADE)] %>%
     select(gene) %>%
-    unique %>%
-    unlist %>%
-    as.character
+    unique() %>%
+    unlist() %>%
+    as.character()
 ```
 
 ```{r Fig_mTconv_DEG_example, results="asis", echo = FALSE}
 .mkdir(fig.dir %&% "/example/")
 for(g in .genes.show){
     .file <- fig.dir %&% "/example/Fig_mTconv_DEG_example_" %&% g %&% ".pdf"
-    if.needed(.file, {
-        plt <- show.each.gene(g, .hc.ms.dt, hc.ms.deg)
-        .gg.save(filename = .file, cat.link = FALSE, plot = plt, width=5, height=3)
-    })
+   if.needed(.file, {
+       plt <- show.each.gene(g, .hc.ms.dt, hc.ms.deg)
+       .gg.save(filename = .file, cat.link = FALSE, plot = plt, width=4, height=3)
+   })
 }
 ```
 
-```{r Tab_mTconv_DEG_FDR5, results="asis", echo = FALSE}
-data.table(gene = .genes.show) %>%
-    left_join(hc.ms.deg) %>%
-    filter(fdr < .05) %>% 
-    mutate(is.G=factor(str_starts(`gene`,"ENSG"), c(T,F), c("Gene","Ab"))) %>%
-    mutate(.file=fig.dir %&% "/example/Fig_mTconv_DEG_example_" %&% gene %&% ".pdf") %>%
-    mutate(.link = "[PDF](" %&% .file %&% ") ") %>% 
-    select(membership, hgnc_symbol, z, pv, fdr, .link) %>% 
-    mutate(z = num.round(z), pv = num.sci(pv), fdr = num.sci(fdr)) %>% 
-    arrange(membership, pv) %>%
+```{r Tab_mTconv_DEG_FDR, results="asis", echo = FALSE}
+fig.hdr <- fig.dir %&% "/example/Fig_mTconv_DEG_example_"
+deg.tab <- hc.ms.deg[gene %in% .genes.show]
+
+format.deg.tab(deg.tab, fig.hdr) %>% 
     kbl() %>% 
     kable_paper("striped", full_width=F, html_font = "Helvetica") %>%
-    column_spec(1, bold = T) %>%
-    collapse_rows(columns=1, valign = "top")
+    column_spec(1, bold = T)
 cat("\n\n\n")
 ```
 
@@ -487,7 +513,7 @@ if.needed(.file, {
     as.data.table()
 
 hc.ms.deg <-
-    summarize.deg(.hc.ms.dt, tot.cutoff = 10) %>%
+    summarize.deg(.hc.ms.dt, tot.cutoff = 5) %>%
     parse.gene()
 ```
 
@@ -501,15 +527,15 @@ if.needed(.file, {
 cat("[**DOWNLOAD:** mtreg DEG MS vs HC]("%&% .file %&% ")\n\n")
 ```
 
-### Found `r num.int(nrow(unique(hc.ms.deg[fdr < .05, .(gene)])))` unique genes strongly perturbed by MS with FDR 5%
+### Found `r num.int(nrow(unique(hc.ms.deg[fdr < .1, .(gene)])))` unique genes strongly perturbed by MS with FDR 10%
 
-* Up-regulated: `r num.int(nrow(unique(hc.ms.deg[fdr < .05 & z > 0, .(gene)])))`
+* Up-regulated: `r num.int(nrow(unique(hc.ms.deg[fdr < .1 & z > 0, .(gene)])))`
 
-* Down-regulated:  `r num.int(nrow(unique(hc.ms.deg[fdr < .05 & z < 0, .(gene)])))`
+* Down-regulated:  `r num.int(nrow(unique(hc.ms.deg[fdr < .1 & z < 0, .(gene)])))`
 
 * Total pairs of genes and clusters: `r num.int(nrow(hc.ms.deg))`
 
-```{r Fig_mTreg_DEG_count, fig.width=3, fig.height=2, echo = FALSE, results="asis"}
+```{r Fig_mTreg_DEG_count, fig.width=2, fig.height=2, echo = FALSE, results="asis"}
 .df <- count.deg(hc.ms.deg)
 
 plt <-
@@ -527,22 +553,18 @@ print(plt)
 ```
 
 ```{r}
-.bulk.genes <-
-    bulk.mTreg.dt[bulk.qv < .2, .(hgnc_symbol)] %>% 
-    unique() %>%
-    unlist()
-
 hc.ms.deg[, c("ensembl_gene_id", "hgnc_symbol") := tstrsplit(`gene`, split="_")]
 
+major.deg <- major.deg.tab[fwer < .05]$hgnc_symbol
+
 .genes.show <-
-    hc.ms.deg[fdr < 0.05 &
-              hgnc_symbol %in% .bulk.genes &
+    hc.ms.deg[hgnc_symbol %in% major.deg &
               sign(ADD) == sign(ADE) &
               sign(ADC) == sign(ADE)] %>%
     select(gene) %>%
-    unique %>%
-    unlist %>%
-    as.character
+    unique() %>%
+    unlist() %>%
+    as.character()
 ```
 
 ```{r Fig_mTreg_DEG_example, results="asis", echo = FALSE}
@@ -551,25 +573,20 @@ for(g in .genes.show){
     .file <- fig.dir %&% "/example/Fig_mTreg_DEG_example_" %&% g %&% ".pdf"
     if.needed(.file, {
         plt <- show.each.gene(g, .hc.ms.dt, hc.ms.deg)
-        .gg.save(filename=.file, cat.link=FALSE, plot=plt, width=7, height=3)
+        .gg.save(filename=.file, cat.link=FALSE, plot=plt, width=4, height=3)
     })
 }
 cat("\n\n\n")
 ```
 
-```{r Tab_mTreg_DEG_FDR5, results="asis", echo = FALSE}
-data.table(gene = .genes.show) %>%
-    left_join(hc.ms.deg) %>%
-    filter(fdr < .05) %>% 
-    mutate(is.G=factor(str_starts(`gene`,"ENSG"), c(T,F), c("Gene","Ab"))) %>%
-    mutate(.file=fig.dir %&% "/example/Fig_mTreg_DEG_example_" %&% gene %&% ".pdf") %>%
-    mutate(.link = "[PDF](" %&% .file %&% ") ") %>% 
-    select(membership, hgnc_symbol, z, pv, fdr, .link) %>% 
-    mutate(z = num.round(z), pv = num.sci(pv), fdr = num.sci(fdr)) %>% 
-    arrange(membership, pv) %>%
+```{r Tab_mTreg_DEG_FDR, results="asis", echo = FALSE}
+fig.hdr <- fig.dir %&% "/example/Fig_mTreg_DEG_example_"
+deg.tab <- hc.ms.deg[gene %in% .genes.show]
+
+format.deg.tab(deg.tab, fig.hdr) %>% 
     kbl() %>% 
     kable_paper("striped", full_width=F, html_font = "Helvetica") %>%
-    column_spec(1, bold = T) %>%
-    collapse_rows(columns=1, valign = "top")
+    column_spec(1, bold = T)
 cat("\n\n\n")
 ```
+

@@ -2,7 +2,7 @@
 title: "Step 4: subtype analysis"
 author: Yongjin Park
 theme: jekyll-theme-minimal
-date: "2024-02-08"
+date: "2024-02-16"
 bibliography: "MS_Ref.bib"
 output:
   html_document:
@@ -13,31 +13,25 @@ output:
 
 
 
+
 * Marker genes well-known for mTconv cell subtype classification
 
 
 ```r
 .markers <-
-    c("CD3", "CD3E", "CD14", "LYZ",
-      "CCR4","CCR6","CXCR3","CXCR5",
+    c("CCR4","CCR6","CXCR3","CXCR5",
       "ABCA1","GBP4","CDCA7L","ITM2C","NR1D1",
       "CTSH","GATA3","FHIT","CD40LG","C1orf162",
       "MGATA4A","GZMK","IFNGR2",
-      "CD183","CD184","CD185","CD196","CD195","CD194",
+      "CD183","CD185","CD196","CD194",
       "RORC", "TBX21", "HLADR", "CD74", "TCF7", "LEF1",
-      "SELL", "CCR7", "CCR8", "IKZF2", "TIGIT", "CD226",
-      "BATF", "ANXA2", "BRD9", "HPGD", "LMNA", "TNFRSF4",
-      "FOXP3", "FOXP1", "PDCD1", "CD279", "CTLA4", "LAG3",
-      "HAVCR2", "CD366", "KLRB1", "FOSL2", "S100A4", "GMAP7",
-      "JUN", "IL7R", "MYC", "IL32", "ISG20", "MALAT1",
-      "GSDMD", "HDAC1", "GIMAP4", "APOBEC3G", "CD2", "CD28", "CD6",
-      "CDKN2A", "CORO1A", "FAS", "FLI1", "GPR25", "MT2A", "KEAP1",
-      "IL12RB", "SIRT2", "TNFRSF14", "TRAF3IP3", "IRF2", "PSPH",
-      "CD278", "B2M", "RPS26", "MAP1S", "SGK1", "BACH2",
-      "HLA-C", "HLA-B", "HLA-E", "HLA-DR", "HLA-DRA", "HLA-DRB1",
-      "S1PR4", "KLF2", "SATB1", "TSC22D3", "IL2RA", "CD25") %>%
+      "CCR7", "CCR8", "IKZF2", "TIGIT", "LAG3",
+      "HAVCR2", "CD366", "KLRB1", "FOSL2", "SGK1", "BACH2",
+      "HLA-C", "HLA-B", "HLA-E", "HLA-DR", "HLA-DRA", "HLA-DRB1") %>%
     unique
 ```
+
+
 
 * Goal: Identify cellular states/subtypes in memory T cells
 
@@ -49,7 +43,6 @@ output:
 annot.dt <- fread("Tab/step2_cell_type.txt.gz") %>%
     left_join(.hash.info)
 ```
-
 
 
 
@@ -81,14 +74,14 @@ if.needed(.file, {
 
     .batches <- take.batch.info(.data)
 
-    .svd <- rcpp_mmutil_svd(.data$mtx, RANK=50, TAKE_LN=T, EM_ITER = 20, NUM_THREADS=16)
+    .svd <- rcpp_mmutil_svd(.data$mtx, RANK=30, TAKE_LN=T, EM_ITER = 20, NUM_THREADS=16)
 
     .bbknn <-
         rcpp_mmutil_bbknn(r_svd_u = .svd$U,
                           r_svd_v = .svd$V,
                           r_svd_d = .svd$D,
                           r_batches = .batches, # batch label
-                          knn = 50,             # 20 nn per batch
+                          knn = 50,             # 10 nn per batch
                           RECIPROCAL_MATCH = T, # crucial
                           NUM_THREADS = 16,
                           USE_SINGULAR_VALUES = T)
@@ -116,10 +109,11 @@ print(plt)
 
 
 ```r
+set.seed(1)
 .file <- "Tab/step4_mtconv_leiden.txt.gz"
 if.needed(.file, {
     .tags <- readLines(.data$col)
-    .leiden <- run.leiden(.bbknn$knn.adj, .tags, res=.7, nrepeat = 100, min.size = 100)
+    .leiden <- run.leiden(.bbknn$knn.adj, .tags, res=.3, nrepeat = 1000, min.size = 100)
     fwrite(.leiden, .file)
 })
 .leiden <- fread(.file)
@@ -139,7 +133,7 @@ if.needed(.file, {
                          n_epochs=3000,
                          n_sgd_threads=16,
                          verbose=T,
-                         init="pca")
+                         init="spectral")
 
     .tags <- readLines(.data$col)
 
@@ -202,7 +196,6 @@ marker.stat <- fread(.file, sep = "\t")
 [**DOWNLOAD:** mTconv marker gene statistics](Tab/step4_mtconv_gene_stat.txt.gz)
 
 
-
 ### C. Non-linear embedding to confirm the cell clusters of mTconv cells
 
 
@@ -220,19 +213,19 @@ marker.stat <- fread(.file, sep = "\t")
              tSNE2=median(tSNE2)),
            by = .(component, membership)]
 
-.cols <- .more.colors(nrow(.lab), nc.pal=8, .palette="Set1")
+mtconv.cols <- .more.colors(nrow(.lab), nc.pal=5, .palette="Set1")
 
 p1 <-
     .gg.plot(.cells, aes(UMAP1, UMAP2, color=as.factor(membership))) +
     ggrastr::rasterise(geom_point(stroke=0, alpha=.8, size=.7), dpi=300) +
     geom_text(aes(label=membership), data=.lab, size=4, color="black") +
-    scale_color_manual(values = .cols, guide="none")
+    scale_color_manual(values = mtconv.cols, guide="none")
 
 p2 <-
     .gg.plot(.cells, aes(tSNE1, tSNE2, color=as.factor(membership))) +
     ggrastr::rasterise(geom_point(stroke=0, alpha=.8, size=.7), dpi=300) +
     geom_text(aes(label=membership), data=.lab, size=4, color="black") +
-    scale_color_manual(values = .cols, guide="none")
+    scale_color_manual(values = mtconv.cols, guide="none")
 
 plt <- p1 | p2
 print(plt)
@@ -243,14 +236,12 @@ print(plt)
 
 [PDF](Fig/STEP4//Fig_bbknn_mtconv.pdf)
 
-
 ##### Confirm batch/individual-specific effects
-
-**NOTE: Normalized expressions across cells within the same major cell type!**
 
 
 ```r
-.cols <- .more.colors(10, nc.pal=7, .palette="Set1")
+nn <- length(unique(.cells$subject))
+.cols <- .more.colors(nn, nc.pal=7, .palette="Set2")
 
 p1 <-
     .gg.plot(.cells, aes(UMAP1, UMAP2, color=as.factor(subject))) +
@@ -264,7 +255,19 @@ p2 <-
     ggrastr::rasterise(geom_point(stroke=0, alpha=.8, size=.7), dpi=300) +
     scale_color_manual(values = .cols, guide="none")
 
-plt <- p1 | p2
+p3 <-
+    .gg.plot(.cells, aes(UMAP1, UMAP2, color=as.factor(disease))) +
+    xlab("UMAP1") + ylab("UMAP2") +
+    ggrastr::rasterise(geom_point(stroke=0, alpha=.8, size=.7), dpi=300) +
+    scale_color_brewer("", palette = "Set1", guide="none")
+
+p4 <-
+    .gg.plot(.cells, aes(UMAP1, UMAP2, color=as.factor(disease))) +
+    xlab("UMAP1") + ylab("UMAP2") +
+    ggrastr::rasterise(geom_point(stroke=0, alpha=.8, size=.7), dpi=300) +
+    scale_color_brewer("", palette = "Set1", guide="none")
+
+plt <- (p1 | p2)/(p3 | p4)
 print(plt)
 ```
 
@@ -273,8 +276,14 @@ print(plt)
 
 [PDF](Fig/STEP4//Fig_bbknn_mtconv_sub.pdf)
 
+### D. Summary heatmap
+
+**NOTE** The colors are standardized `log1p` expression across genes and cells.
+
 
 ```r
+.cells <- .leiden %>%
+    left_join(.hash.info)
 x.melt <- bbknn.x.melt(.data, .bbknn, .markers)
 .dt <- x.melt %>% left_join(.cells) %>% na.omit()
 .sum.subj <- .dt[, .(x = median(x)), by = .(gene, subject, membership)]
@@ -333,58 +342,6 @@ print(plt)
 
 [PDF](Fig/STEP4//Fig_mtconv_sum_subj_member.pdf)
 
-#### UMAP for each marker gene (normalized expression)
-
-
-```r
-.mkdir(fig.dir %&% "/example/")
-for(g in unique(x.melt$gene)) {
-    .dt <- left_join(x.melt[gene == g], .cells)
-    .aes <- aes(UMAP1, UMAP2, color=pmax(pmin(x, 3), -3))
-
-    plt <-
-        .gg.plot(.dt[order(`x`)], .aes) +
-        xlab("UMAP1") + ylab("UMAP2") +
-        ggrastr::rasterise(geom_point(stroke = 0, size=.7), dpi=300) +
-        theme(legend.key.width = unit(.2,"lines")) +
-        theme(legend.key.height = unit(.5,"lines")) +
-        scale_color_distiller(g, palette = "RdBu", direction = -1) +
-        ggtitle(g)
-
-    .file <- fig.dir %&% "/example/Fig_mtconv_gene_umap_" %&% g %&% ".pdf"
-    .gg.save(filename = .file, plot = plt, width=3, height=2.5, cat.link = F)
-    cat("[" %&% g %&% "](" %&% .file %&% ") ")
-}
-```
-
-[CD14](Fig/STEP4//example/Fig_mtconv_gene_umap_CD14.pdf) [CD183](Fig/STEP4//example/Fig_mtconv_gene_umap_CD183.pdf) [CD184](Fig/STEP4//example/Fig_mtconv_gene_umap_CD184.pdf) [CD185](Fig/STEP4//example/Fig_mtconv_gene_umap_CD185.pdf) [CD194](Fig/STEP4//example/Fig_mtconv_gene_umap_CD194.pdf) [CD195](Fig/STEP4//example/Fig_mtconv_gene_umap_CD195.pdf) [CD196](Fig/STEP4//example/Fig_mtconv_gene_umap_CD196.pdf) [CD226](Fig/STEP4//example/Fig_mtconv_gene_umap_CD226.pdf) [CD25](Fig/STEP4//example/Fig_mtconv_gene_umap_CD25.pdf) [CD278](Fig/STEP4//example/Fig_mtconv_gene_umap_CD278.pdf) [CD279](Fig/STEP4//example/Fig_mtconv_gene_umap_CD279.pdf) [CD366](Fig/STEP4//example/Fig_mtconv_gene_umap_CD366.pdf) [CD6](Fig/STEP4//example/Fig_mtconv_gene_umap_CD6.pdf) [CD74](Fig/STEP4//example/Fig_mtconv_gene_umap_CD74.pdf) [FAS](Fig/STEP4//example/Fig_mtconv_gene_umap_FAS.pdf) [BRD9](Fig/STEP4//example/Fig_mtconv_gene_umap_BRD9.pdf) [IKZF2](Fig/STEP4//example/Fig_mtconv_gene_umap_IKZF2.pdf) [FOXP3](Fig/STEP4//example/Fig_mtconv_gene_umap_FOXP3.pdf) [SIRT2](Fig/STEP4//example/Fig_mtconv_gene_umap_SIRT2.pdf) [TBX21](Fig/STEP4//example/Fig_mtconv_gene_umap_TBX21.pdf) [FOSL2](Fig/STEP4//example/Fig_mtconv_gene_umap_FOSL2.pdf) [KEAP1](Fig/STEP4//example/Fig_mtconv_gene_umap_KEAP1.pdf) [TCF7](Fig/STEP4//example/Fig_mtconv_gene_umap_TCF7.pdf) [LAG3](Fig/STEP4//example/Fig_mtconv_gene_umap_LAG3.pdf) [LYZ](Fig/STEP4//example/Fig_mtconv_gene_umap_LYZ.pdf) [CD40LG](Fig/STEP4//example/Fig_mtconv_gene_umap_CD40LG.pdf) [CTSH](Fig/STEP4//example/Fig_mtconv_gene_umap_CTSH.pdf) [GSDMD](Fig/STEP4//example/Fig_mtconv_gene_umap_GSDMD.pdf) [GATA3](Fig/STEP4//example/Fig_mtconv_gene_umap_GATA3.pdf) [KLRB1](Fig/STEP4//example/Fig_mtconv_gene_umap_KLRB1.pdf) [BACH2](Fig/STEP4//example/Fig_mtconv_gene_umap_BACH2.pdf) [CCR6](Fig/STEP4//example/Fig_mtconv_gene_umap_CCR6.pdf) [GZMK](Fig/STEP4//example/Fig_mtconv_gene_umap_GZMK.pdf) [HDAC1](Fig/STEP4//example/Fig_mtconv_gene_umap_HDAC1.pdf) [SGK1](Fig/STEP4//example/Fig_mtconv_gene_umap_SGK1.pdf) [MT2A](Fig/STEP4//example/Fig_mtconv_gene_umap_MT2A.pdf) [S1PR4](Fig/STEP4//example/Fig_mtconv_gene_umap_S1PR4.pdf) [CCR7](Fig/STEP4//example/Fig_mtconv_gene_umap_CCR7.pdf) [NR1D1](Fig/STEP4//example/Fig_mtconv_gene_umap_NR1D1.pdf) [MAP1S](Fig/STEP4//example/Fig_mtconv_gene_umap_MAP1S.pdf) [IL2RA](Fig/STEP4//example/Fig_mtconv_gene_umap_IL2RA.pdf) [ITM2C](Fig/STEP4//example/Fig_mtconv_gene_umap_ITM2C.pdf) [MYC](Fig/STEP4//example/Fig_mtconv_gene_umap_MYC.pdf) [C1orf162](Fig/STEP4//example/Fig_mtconv_gene_umap_C1orf162.pdf) [RORC](Fig/STEP4//example/Fig_mtconv_gene_umap_RORC.pdf) [PSPH](Fig/STEP4//example/Fig_mtconv_gene_umap_PSPH.pdf) [CDKN2A](Fig/STEP4//example/Fig_mtconv_gene_umap_CDKN2A.pdf) [FLI1](Fig/STEP4//example/Fig_mtconv_gene_umap_FLI1.pdf) [BATF](Fig/STEP4//example/Fig_mtconv_gene_umap_BATF.pdf) [TNFRSF14](Fig/STEP4//example/Fig_mtconv_gene_umap_TNFRSF14.pdf) [IFNGR2](Fig/STEP4//example/Fig_mtconv_gene_umap_IFNGR2.pdf) [CXCR5](Fig/STEP4//example/Fig_mtconv_gene_umap_CXCR5.pdf) [LMNA](Fig/STEP4//example/Fig_mtconv_gene_umap_LMNA.pdf) [GBP4](Fig/STEP4//example/Fig_mtconv_gene_umap_GBP4.pdf) [CTLA4](Fig/STEP4//example/Fig_mtconv_gene_umap_CTLA4.pdf) [HPGD](Fig/STEP4//example/Fig_mtconv_gene_umap_HPGD.pdf) [CDCA7L](Fig/STEP4//example/Fig_mtconv_gene_umap_CDCA7L.pdf) [ABCA1](Fig/STEP4//example/Fig_mtconv_gene_umap_ABCA1.pdf) [IRF2](Fig/STEP4//example/Fig_mtconv_gene_umap_IRF2.pdf) [GPR25](Fig/STEP4//example/Fig_mtconv_gene_umap_GPR25.pdf) [ISG20](Fig/STEP4//example/Fig_mtconv_gene_umap_ISG20.pdf) [JUN](Fig/STEP4//example/Fig_mtconv_gene_umap_JUN.pdf) [CD28](Fig/STEP4//example/Fig_mtconv_gene_umap_CD28.pdf) [CCR8](Fig/STEP4//example/Fig_mtconv_gene_umap_CCR8.pdf) [TIGIT](Fig/STEP4//example/Fig_mtconv_gene_umap_TIGIT.pdf) [SATB1](Fig/STEP4//example/Fig_mtconv_gene_umap_SATB1.pdf) [ANXA2](Fig/STEP4//example/Fig_mtconv_gene_umap_ANXA2.pdf) [CCR4](Fig/STEP4//example/Fig_mtconv_gene_umap_CCR4.pdf) [CXCR3](Fig/STEP4//example/Fig_mtconv_gene_umap_CXCR3.pdf) [TNFRSF4](Fig/STEP4//example/Fig_mtconv_gene_umap_TNFRSF4.pdf) [PDCD1](Fig/STEP4//example/Fig_mtconv_gene_umap_PDCD1.pdf) [FHIT](Fig/STEP4//example/Fig_mtconv_gene_umap_FHIT.pdf) [HLA-DRB1](Fig/STEP4//example/Fig_mtconv_gene_umap_HLA-DRB1.pdf) [S100A4](Fig/STEP4//example/Fig_mtconv_gene_umap_S100A4.pdf) [HLA-DRA](Fig/STEP4//example/Fig_mtconv_gene_umap_HLA-DRA.pdf) [APOBEC3G](Fig/STEP4//example/Fig_mtconv_gene_umap_APOBEC3G.pdf) [HLA-DR](Fig/STEP4//example/Fig_mtconv_gene_umap_HLA-DR.pdf) 
-
-#### tSNE for each marker gene (normalized expression)
-
-
-```r
-.mkdir(fig.dir %&% "/example/")
-for(g in unique(x.melt$gene)) {
-    .dt <- left_join(x.melt[gene == g], .cells)
-    .aes <- aes(tSNE1, tSNE2, color=pmax(pmin(x, 3), -3))
-
-    plt <-
-        .gg.plot(.dt[order(`x`)], .aes) +
-        xlab("TSNE1") + ylab("TSNE2") +
-        ggrastr::rasterise(geom_point(stroke = 0, size=.7), dpi=300) +
-        theme(legend.key.width = unit(.2,"lines")) +
-        theme(legend.key.height = unit(.5,"lines")) +
-        scale_color_distiller(g, palette = "RdBu", direction = -1) +
-        ggtitle(g)
-
-    .file <- fig.dir %&% "/example/Fig_mtconv_gene_tsne_" %&% g %&% ".pdf"
-    .gg.save(filename = .file, plot = plt, width=3, height=2.5, cat.link = F)
-    cat("[" %&% g %&% "](" %&% .file %&% ") ")
-}
-```
-
-[CD14](Fig/STEP4//example/Fig_mtconv_gene_tsne_CD14.pdf) [CD183](Fig/STEP4//example/Fig_mtconv_gene_tsne_CD183.pdf) [CD184](Fig/STEP4//example/Fig_mtconv_gene_tsne_CD184.pdf) [CD185](Fig/STEP4//example/Fig_mtconv_gene_tsne_CD185.pdf) [CD194](Fig/STEP4//example/Fig_mtconv_gene_tsne_CD194.pdf) [CD195](Fig/STEP4//example/Fig_mtconv_gene_tsne_CD195.pdf) [CD196](Fig/STEP4//example/Fig_mtconv_gene_tsne_CD196.pdf) [CD226](Fig/STEP4//example/Fig_mtconv_gene_tsne_CD226.pdf) [CD25](Fig/STEP4//example/Fig_mtconv_gene_tsne_CD25.pdf) [CD278](Fig/STEP4//example/Fig_mtconv_gene_tsne_CD278.pdf) [CD279](Fig/STEP4//example/Fig_mtconv_gene_tsne_CD279.pdf) [CD366](Fig/STEP4//example/Fig_mtconv_gene_tsne_CD366.pdf) [CD6](Fig/STEP4//example/Fig_mtconv_gene_tsne_CD6.pdf) [CD74](Fig/STEP4//example/Fig_mtconv_gene_tsne_CD74.pdf) [FAS](Fig/STEP4//example/Fig_mtconv_gene_tsne_FAS.pdf) [BRD9](Fig/STEP4//example/Fig_mtconv_gene_tsne_BRD9.pdf) [IKZF2](Fig/STEP4//example/Fig_mtconv_gene_tsne_IKZF2.pdf) [FOXP3](Fig/STEP4//example/Fig_mtconv_gene_tsne_FOXP3.pdf) [SIRT2](Fig/STEP4//example/Fig_mtconv_gene_tsne_SIRT2.pdf) [TBX21](Fig/STEP4//example/Fig_mtconv_gene_tsne_TBX21.pdf) [FOSL2](Fig/STEP4//example/Fig_mtconv_gene_tsne_FOSL2.pdf) [KEAP1](Fig/STEP4//example/Fig_mtconv_gene_tsne_KEAP1.pdf) [TCF7](Fig/STEP4//example/Fig_mtconv_gene_tsne_TCF7.pdf) [LAG3](Fig/STEP4//example/Fig_mtconv_gene_tsne_LAG3.pdf) [LYZ](Fig/STEP4//example/Fig_mtconv_gene_tsne_LYZ.pdf) [CD40LG](Fig/STEP4//example/Fig_mtconv_gene_tsne_CD40LG.pdf) [CTSH](Fig/STEP4//example/Fig_mtconv_gene_tsne_CTSH.pdf) [GSDMD](Fig/STEP4//example/Fig_mtconv_gene_tsne_GSDMD.pdf) [GATA3](Fig/STEP4//example/Fig_mtconv_gene_tsne_GATA3.pdf) [KLRB1](Fig/STEP4//example/Fig_mtconv_gene_tsne_KLRB1.pdf) [BACH2](Fig/STEP4//example/Fig_mtconv_gene_tsne_BACH2.pdf) [CCR6](Fig/STEP4//example/Fig_mtconv_gene_tsne_CCR6.pdf) [GZMK](Fig/STEP4//example/Fig_mtconv_gene_tsne_GZMK.pdf) [HDAC1](Fig/STEP4//example/Fig_mtconv_gene_tsne_HDAC1.pdf) [SGK1](Fig/STEP4//example/Fig_mtconv_gene_tsne_SGK1.pdf) [MT2A](Fig/STEP4//example/Fig_mtconv_gene_tsne_MT2A.pdf) [S1PR4](Fig/STEP4//example/Fig_mtconv_gene_tsne_S1PR4.pdf) [CCR7](Fig/STEP4//example/Fig_mtconv_gene_tsne_CCR7.pdf) [NR1D1](Fig/STEP4//example/Fig_mtconv_gene_tsne_NR1D1.pdf) [MAP1S](Fig/STEP4//example/Fig_mtconv_gene_tsne_MAP1S.pdf) [IL2RA](Fig/STEP4//example/Fig_mtconv_gene_tsne_IL2RA.pdf) [ITM2C](Fig/STEP4//example/Fig_mtconv_gene_tsne_ITM2C.pdf) [MYC](Fig/STEP4//example/Fig_mtconv_gene_tsne_MYC.pdf) [C1orf162](Fig/STEP4//example/Fig_mtconv_gene_tsne_C1orf162.pdf) [RORC](Fig/STEP4//example/Fig_mtconv_gene_tsne_RORC.pdf) [PSPH](Fig/STEP4//example/Fig_mtconv_gene_tsne_PSPH.pdf) [CDKN2A](Fig/STEP4//example/Fig_mtconv_gene_tsne_CDKN2A.pdf) [FLI1](Fig/STEP4//example/Fig_mtconv_gene_tsne_FLI1.pdf) [BATF](Fig/STEP4//example/Fig_mtconv_gene_tsne_BATF.pdf) [TNFRSF14](Fig/STEP4//example/Fig_mtconv_gene_tsne_TNFRSF14.pdf) [IFNGR2](Fig/STEP4//example/Fig_mtconv_gene_tsne_IFNGR2.pdf) [CXCR5](Fig/STEP4//example/Fig_mtconv_gene_tsne_CXCR5.pdf) [LMNA](Fig/STEP4//example/Fig_mtconv_gene_tsne_LMNA.pdf) [GBP4](Fig/STEP4//example/Fig_mtconv_gene_tsne_GBP4.pdf) [CTLA4](Fig/STEP4//example/Fig_mtconv_gene_tsne_CTLA4.pdf) [HPGD](Fig/STEP4//example/Fig_mtconv_gene_tsne_HPGD.pdf) [CDCA7L](Fig/STEP4//example/Fig_mtconv_gene_tsne_CDCA7L.pdf) [ABCA1](Fig/STEP4//example/Fig_mtconv_gene_tsne_ABCA1.pdf) [IRF2](Fig/STEP4//example/Fig_mtconv_gene_tsne_IRF2.pdf) [GPR25](Fig/STEP4//example/Fig_mtconv_gene_tsne_GPR25.pdf) [ISG20](Fig/STEP4//example/Fig_mtconv_gene_tsne_ISG20.pdf) [JUN](Fig/STEP4//example/Fig_mtconv_gene_tsne_JUN.pdf) [CD28](Fig/STEP4//example/Fig_mtconv_gene_tsne_CD28.pdf) [CCR8](Fig/STEP4//example/Fig_mtconv_gene_tsne_CCR8.pdf) [TIGIT](Fig/STEP4//example/Fig_mtconv_gene_tsne_TIGIT.pdf) [SATB1](Fig/STEP4//example/Fig_mtconv_gene_tsne_SATB1.pdf) [ANXA2](Fig/STEP4//example/Fig_mtconv_gene_tsne_ANXA2.pdf) [CCR4](Fig/STEP4//example/Fig_mtconv_gene_tsne_CCR4.pdf) [CXCR3](Fig/STEP4//example/Fig_mtconv_gene_tsne_CXCR3.pdf) [TNFRSF4](Fig/STEP4//example/Fig_mtconv_gene_tsne_TNFRSF4.pdf) [PDCD1](Fig/STEP4//example/Fig_mtconv_gene_tsne_PDCD1.pdf) [FHIT](Fig/STEP4//example/Fig_mtconv_gene_tsne_FHIT.pdf) [HLA-DRB1](Fig/STEP4//example/Fig_mtconv_gene_tsne_HLA-DRB1.pdf) [S100A4](Fig/STEP4//example/Fig_mtconv_gene_tsne_S100A4.pdf) [HLA-DRA](Fig/STEP4//example/Fig_mtconv_gene_tsne_HLA-DRA.pdf) [APOBEC3G](Fig/STEP4//example/Fig_mtconv_gene_tsne_APOBEC3G.pdf) [HLA-DR](Fig/STEP4//example/Fig_mtconv_gene_tsne_HLA-DR.pdf) 
-
 ### E. Basic statistics
 
 
@@ -396,7 +353,18 @@ for(g in unique(x.melt$gene)) {
     mutate(membership = as.factor(membership)) %>% 
     .sum.stat.batch()
 
-plt <- .plt.sum.stat(.stat) + ggtitle("mTconv")
+plt <- .plt.sum.stat(.stat, .cols=mtconv.cols, show.prop = T) + ggtitle("mTconv")
+print(plt)
+```
+
+![](Fig/STEP4/Fig_count_mtconv_prop-1.png)<!-- -->
+
+
+[PDF](Fig/STEP4//Fig_count_mtconv_prop.pdf)
+
+
+```r
+plt <- .plt.sum.stat(.stat, .cols=mtconv.cols, show.prop = F) + ggtitle("mTconv")
 print(plt)
 ```
 
@@ -415,7 +383,18 @@ print(plt)
     .sum.stat.tot() %>%
     mutate(batch = "(N=" %&% num.int(sum(.stat$N)) %&% ")")
 
-plt <- .plt.sum.stat(.stat.tot) + ggtitle("mTconv")
+plt <- .plt.sum.stat(.stat.tot, .cols=mtconv.cols, show.prop = T) + ggtitle("mTconv")
+print(plt)
+```
+
+![](Fig/STEP4/Fig_count_merged_mtconv_prop-1.png)<!-- -->
+
+
+[PDF](Fig/STEP4//Fig_count_merged_mtconv_prop.pdf)
+
+
+```r
+plt <- .plt.sum.stat(.stat.tot, .cols=mtconv.cols, show.prop = F) + ggtitle("mTconv")
 print(plt)
 ```
 
@@ -518,12 +497,11 @@ print(plt)
 
 
 
-
 ```r
 .file <- "result/step4/qc_mtreg_svd.rds"
 
 if.needed(.file, {
-    mtreg.svd <- rcpp_mmutil_svd(.mtreg.qc.data$mtx, RANK=50, TAKE_LN=T,
+    mtreg.svd <- rcpp_mmutil_svd(.mtreg.qc.data$mtx, RANK=30, TAKE_LN=T,
                                 NUM_THREADS = 16, EM_ITER = 20)
     saveRDS(mtreg.svd, .file)
 })
@@ -536,6 +514,9 @@ print(plt)
 ```
 
 ![](Fig/STEP4/compute_mtreg_svd_after_qc-1.png)<!-- -->
+
+
+[PDF](Fig/STEP4//Fig_svd_batch_mtreg.pdf)
 
 
 ```r
@@ -551,15 +532,14 @@ print(plt)
 if.needed(.file, {
 
     .batches <- take.batch.info(.data)
-
-    .svd <- rcpp_mmutil_svd(.data$mtx, RANK=50, TAKE_LN=T, EM_ITER = 20, NUM_THREADS=16)
+    .svd <- mtreg.svd
 
     .bbknn <-
         rcpp_mmutil_bbknn(r_svd_u = .svd$U,
                           r_svd_v = .svd$V,
                           r_svd_d = .svd$D,
                           r_batches = .batches, # batch label
-                          knn = 50,             # 20 nn per batch
+                          knn = 50,             # 10 nn per batch
                           RECIPROCAL_MATCH = T, # crucial
                           NUM_THREADS = 16,
                           USE_SINGULAR_VALUES = T)
@@ -569,34 +549,17 @@ if.needed(.file, {
 .bbknn <- readRDS(.file)
 ```
 
-
-
-[PDF](Fig/STEP4//Fig_svd_batch_mtreg.pdf)
-
 ### A. Clustering cells by batch-balancing k-nearest neighbour graph
-
-
-```r
-.file <- "Tab/step4_mtreg_leiden_raw.txt.gz"
-if.needed(.file, {
-    .tags <- readLines(.data$col)
-    .leiden.raw <- run.leiden(.bbknn$knn.adj, .tags, res=.5, nrepeat = 100, min.size = 100)
-    fwrite(.leiden.raw, .file)
-})
-.leiden.raw <- fread(.file)
-```
-
-
-
 
 
 ```r
 .file <- "Tab/step4_mtreg_leiden.txt.gz"
 if.needed(.file, {
-    .leiden <- qc.leiden(.leiden.raw, .cutoff = .75)
+    .tags <- readLines(.data$col)
+    .leiden <- run.leiden(.bbknn$knn.adj, .tags, res=.3, nrepeat = 1000, min.size = 100)
     fwrite(.leiden, .file)
 })
-.leiden <- fread(.file)    
+.leiden <- fread(.file)
 ```
 
 [**DOWNLOAD:** mtreg Leiden results](Tab/step4_mtreg_leiden.txt.gz)
@@ -613,7 +576,7 @@ if.needed(.file, {
                          n_epochs=3000,
                          n_sgd_threads=16,
                          verbose=T,
-                         init="pca")
+                         init="lvrandom")
 
     .tags <- readLines(.data$col)
 
@@ -657,7 +620,6 @@ if.needed(.file, {
 [**DOWNLOAD:** mtreg tSNE results](Tab/step4_tsne_mtreg.txt.gz)
 
 
-
 ### B. What are the cell-cluster-specific marker genes?
 
 
@@ -692,19 +654,20 @@ marker.stat <- fread(.file, sep = "\t")
              tSNE2=median(tSNE2)),
            by = .(component, membership)]
 
-.cols <- .more.colors(nrow(.lab), nc.pal=12)
+K <- nrow(.lab)
+mtreg.cols <- .more.colors(K, nc.pal=min(K, 5), .palette="Accent")
 
 p1 <-
     .gg.plot(.cells, aes(UMAP1, UMAP2, color=as.factor(membership))) +
     ggrastr::rasterise(geom_point(stroke=0, alpha=.8, size=.7), dpi=300) +
     geom_text(aes(label=membership), data=.lab, size=4, color="black") +
-    scale_color_manual(values = .cols, guide="none")
+    scale_color_manual(values = mtreg.cols, guide="none")
 
 p2 <-
     .gg.plot(.cells, aes(tSNE1, tSNE2, color=as.factor(membership))) +
     ggrastr::rasterise(geom_point(stroke=0, alpha=.8, size=.7), dpi=300) +
     geom_text(aes(label=membership), data=.lab, size=4, color="black") +
-    scale_color_manual(values = .cols, guide="none")
+    scale_color_manual(values = mtreg.cols, guide="none")
 
 plt <- p1 | p2
 print(plt)
@@ -719,7 +682,8 @@ print(plt)
 
 
 ```r
-.cols <- .more.colors(10, nc.pal=7, .palette="Set1")
+nn <- length(unique(.cells$subject))
+.cols <- .more.colors(nn, nc.pal=5, .palette="Set1")
 
 p1 <-
     .gg.plot(.cells, aes(UMAP1, UMAP2, color=as.factor(subject))) +
@@ -733,7 +697,19 @@ p2 <-
     ggrastr::rasterise(geom_point(stroke=0, alpha=.8, size=.7), dpi=300) +
     scale_color_manual(values = .cols, guide="none")
 
-plt <- p1 | p2
+p3 <-
+    .gg.plot(.cells, aes(UMAP1, UMAP2, color=as.factor(disease))) +
+    xlab("UMAP1") + ylab("UMAP2") +
+    ggrastr::rasterise(geom_point(stroke=0, alpha=.8, size=.7), dpi=300) +
+    scale_color_brewer("", palette = "Set1", guide="none")
+
+p4 <-
+    .gg.plot(.cells, aes(UMAP1, UMAP2, color=as.factor(disease))) +
+    xlab("UMAP1") + ylab("UMAP2") +
+    ggrastr::rasterise(geom_point(stroke=0, alpha=.8, size=.7), dpi=300) +
+    scale_color_brewer("", palette = "Set1", guide="none")
+
+plt <- (p1 | p2)/(p3 | p4)
 print(plt)
 ```
 
@@ -748,6 +724,7 @@ print(plt)
 
 
 ```r
+.cells <- .leiden %>% left_join(.hash.info)
 x.melt <- bbknn.x.melt(.data, .bbknn, .markers)
 .dt <- x.melt %>% left_join(.cells) %>% na.omit()
 .sum.subj <- .dt[, .(x = median(x)), by = .(gene, subject, membership)]
@@ -805,58 +782,6 @@ print(plt)
 [PDF](Fig/STEP4//Fig_mtreg_sum_subj_member.pdf)
 
 
-#### UMAP for each marker gene
-
-
-```r
-.mkdir(fig.dir %&% "/example/")
-for(g in unique(x.melt$gene)) {
-    .dt <- left_join(x.melt[gene == g], .cells)
-    .aes <- aes(UMAP1, UMAP2, color=pmax(pmin(x, 3), -3))
-
-    plt <-
-        .gg.plot(.dt[order(`x`)], .aes) +
-        xlab("UMAP1") + ylab("UMAP2") +
-        ggrastr::rasterise(geom_point(stroke = 0, size=.7), dpi=300) +
-        theme(legend.key.width = unit(.2,"lines")) +
-        theme(legend.key.height = unit(.5,"lines")) +
-        scale_color_distiller(g, palette = "RdBu", direction = -1) +
-        ggtitle(g)
-
-    .file <- fig.dir %&% "/example/Fig_mtreg_gene_umap_" %&% g %&% ".pdf"
-    .gg.save(filename = .file, plot = plt, width=3, height=2.5, cat.link = F)
-    cat("[" %&% g %&% "](" %&% .file %&% ") ")
-}
-```
-
-[CD14](Fig/STEP4//example/Fig_mtreg_gene_umap_CD14.pdf) [CD183](Fig/STEP4//example/Fig_mtreg_gene_umap_CD183.pdf) [CD184](Fig/STEP4//example/Fig_mtreg_gene_umap_CD184.pdf) [CD185](Fig/STEP4//example/Fig_mtreg_gene_umap_CD185.pdf) [CD194](Fig/STEP4//example/Fig_mtreg_gene_umap_CD194.pdf) [CD195](Fig/STEP4//example/Fig_mtreg_gene_umap_CD195.pdf) [CD196](Fig/STEP4//example/Fig_mtreg_gene_umap_CD196.pdf) [CD226](Fig/STEP4//example/Fig_mtreg_gene_umap_CD226.pdf) [CD25](Fig/STEP4//example/Fig_mtreg_gene_umap_CD25.pdf) [CD278](Fig/STEP4//example/Fig_mtreg_gene_umap_CD278.pdf) [CD279](Fig/STEP4//example/Fig_mtreg_gene_umap_CD279.pdf) [CD366](Fig/STEP4//example/Fig_mtreg_gene_umap_CD366.pdf) [CD6](Fig/STEP4//example/Fig_mtreg_gene_umap_CD6.pdf) [CD74](Fig/STEP4//example/Fig_mtreg_gene_umap_CD74.pdf) [FAS](Fig/STEP4//example/Fig_mtreg_gene_umap_FAS.pdf) [BRD9](Fig/STEP4//example/Fig_mtreg_gene_umap_BRD9.pdf) [IKZF2](Fig/STEP4//example/Fig_mtreg_gene_umap_IKZF2.pdf) [FOXP3](Fig/STEP4//example/Fig_mtreg_gene_umap_FOXP3.pdf) [SIRT2](Fig/STEP4//example/Fig_mtreg_gene_umap_SIRT2.pdf) [TBX21](Fig/STEP4//example/Fig_mtreg_gene_umap_TBX21.pdf) [FOSL2](Fig/STEP4//example/Fig_mtreg_gene_umap_FOSL2.pdf) [KEAP1](Fig/STEP4//example/Fig_mtreg_gene_umap_KEAP1.pdf) [TCF7](Fig/STEP4//example/Fig_mtreg_gene_umap_TCF7.pdf) [LAG3](Fig/STEP4//example/Fig_mtreg_gene_umap_LAG3.pdf) [LYZ](Fig/STEP4//example/Fig_mtreg_gene_umap_LYZ.pdf) [CD40LG](Fig/STEP4//example/Fig_mtreg_gene_umap_CD40LG.pdf) [CTSH](Fig/STEP4//example/Fig_mtreg_gene_umap_CTSH.pdf) [GSDMD](Fig/STEP4//example/Fig_mtreg_gene_umap_GSDMD.pdf) [GATA3](Fig/STEP4//example/Fig_mtreg_gene_umap_GATA3.pdf) [KLRB1](Fig/STEP4//example/Fig_mtreg_gene_umap_KLRB1.pdf) [BACH2](Fig/STEP4//example/Fig_mtreg_gene_umap_BACH2.pdf) [CCR6](Fig/STEP4//example/Fig_mtreg_gene_umap_CCR6.pdf) [GZMK](Fig/STEP4//example/Fig_mtreg_gene_umap_GZMK.pdf) [HDAC1](Fig/STEP4//example/Fig_mtreg_gene_umap_HDAC1.pdf) [SGK1](Fig/STEP4//example/Fig_mtreg_gene_umap_SGK1.pdf) [MT2A](Fig/STEP4//example/Fig_mtreg_gene_umap_MT2A.pdf) [S1PR4](Fig/STEP4//example/Fig_mtreg_gene_umap_S1PR4.pdf) [CCR7](Fig/STEP4//example/Fig_mtreg_gene_umap_CCR7.pdf) [NR1D1](Fig/STEP4//example/Fig_mtreg_gene_umap_NR1D1.pdf) [MAP1S](Fig/STEP4//example/Fig_mtreg_gene_umap_MAP1S.pdf) [IL2RA](Fig/STEP4//example/Fig_mtreg_gene_umap_IL2RA.pdf) [ITM2C](Fig/STEP4//example/Fig_mtreg_gene_umap_ITM2C.pdf) [MYC](Fig/STEP4//example/Fig_mtreg_gene_umap_MYC.pdf) [C1orf162](Fig/STEP4//example/Fig_mtreg_gene_umap_C1orf162.pdf) [RORC](Fig/STEP4//example/Fig_mtreg_gene_umap_RORC.pdf) [PSPH](Fig/STEP4//example/Fig_mtreg_gene_umap_PSPH.pdf) [CDKN2A](Fig/STEP4//example/Fig_mtreg_gene_umap_CDKN2A.pdf) [FLI1](Fig/STEP4//example/Fig_mtreg_gene_umap_FLI1.pdf) [BATF](Fig/STEP4//example/Fig_mtreg_gene_umap_BATF.pdf) [TNFRSF14](Fig/STEP4//example/Fig_mtreg_gene_umap_TNFRSF14.pdf) [IFNGR2](Fig/STEP4//example/Fig_mtreg_gene_umap_IFNGR2.pdf) [CXCR5](Fig/STEP4//example/Fig_mtreg_gene_umap_CXCR5.pdf) [LMNA](Fig/STEP4//example/Fig_mtreg_gene_umap_LMNA.pdf) [GBP4](Fig/STEP4//example/Fig_mtreg_gene_umap_GBP4.pdf) [CTLA4](Fig/STEP4//example/Fig_mtreg_gene_umap_CTLA4.pdf) [HPGD](Fig/STEP4//example/Fig_mtreg_gene_umap_HPGD.pdf) [CDCA7L](Fig/STEP4//example/Fig_mtreg_gene_umap_CDCA7L.pdf) [ABCA1](Fig/STEP4//example/Fig_mtreg_gene_umap_ABCA1.pdf) [IRF2](Fig/STEP4//example/Fig_mtreg_gene_umap_IRF2.pdf) [GPR25](Fig/STEP4//example/Fig_mtreg_gene_umap_GPR25.pdf) [ISG20](Fig/STEP4//example/Fig_mtreg_gene_umap_ISG20.pdf) [JUN](Fig/STEP4//example/Fig_mtreg_gene_umap_JUN.pdf) [CD28](Fig/STEP4//example/Fig_mtreg_gene_umap_CD28.pdf) [CCR8](Fig/STEP4//example/Fig_mtreg_gene_umap_CCR8.pdf) [TIGIT](Fig/STEP4//example/Fig_mtreg_gene_umap_TIGIT.pdf) [SATB1](Fig/STEP4//example/Fig_mtreg_gene_umap_SATB1.pdf) [ANXA2](Fig/STEP4//example/Fig_mtreg_gene_umap_ANXA2.pdf) [CCR4](Fig/STEP4//example/Fig_mtreg_gene_umap_CCR4.pdf) [CXCR3](Fig/STEP4//example/Fig_mtreg_gene_umap_CXCR3.pdf) [TNFRSF4](Fig/STEP4//example/Fig_mtreg_gene_umap_TNFRSF4.pdf) [PDCD1](Fig/STEP4//example/Fig_mtreg_gene_umap_PDCD1.pdf) [FHIT](Fig/STEP4//example/Fig_mtreg_gene_umap_FHIT.pdf) [HLA-DRB1](Fig/STEP4//example/Fig_mtreg_gene_umap_HLA-DRB1.pdf) [S100A4](Fig/STEP4//example/Fig_mtreg_gene_umap_S100A4.pdf) [HLA-DRA](Fig/STEP4//example/Fig_mtreg_gene_umap_HLA-DRA.pdf) [APOBEC3G](Fig/STEP4//example/Fig_mtreg_gene_umap_APOBEC3G.pdf) [HLA-DR](Fig/STEP4//example/Fig_mtreg_gene_umap_HLA-DR.pdf) 
-
-#### tSNE for each marker gene
-
-
-```r
-.mkdir(fig.dir %&% "/example/")
-for(g in unique(x.melt$gene)) {
-    .dt <- left_join(x.melt[gene == g], .cells)
-    .aes <- aes(tSNE1, tSNE2, color=pmax(pmin(x, 3), -3))
-
-    plt <-
-        .gg.plot(.dt[order(`x`)], .aes) +
-        xlab("TSNE1") + ylab("TSNE2") +
-        ggrastr::rasterise(geom_point(stroke = 0, size=.7), dpi=300) +
-        theme(legend.key.width = unit(.2,"lines")) +
-        theme(legend.key.height = unit(.5,"lines")) +
-        scale_color_distiller(g, palette = "RdBu", direction = -1) +
-        ggtitle(g)
-
-    .file <- fig.dir %&% "/example/Fig_mtreg_gene_tsne_" %&% g %&% ".pdf"
-    .gg.save(filename = .file, plot = plt, width=3, height=2.5, cat.link = F)
-    cat("[" %&% g %&% "](" %&% .file %&% ") ")
-}
-```
-
-[CD14](Fig/STEP4//example/Fig_mtreg_gene_tsne_CD14.pdf) [CD183](Fig/STEP4//example/Fig_mtreg_gene_tsne_CD183.pdf) [CD184](Fig/STEP4//example/Fig_mtreg_gene_tsne_CD184.pdf) [CD185](Fig/STEP4//example/Fig_mtreg_gene_tsne_CD185.pdf) [CD194](Fig/STEP4//example/Fig_mtreg_gene_tsne_CD194.pdf) [CD195](Fig/STEP4//example/Fig_mtreg_gene_tsne_CD195.pdf) [CD196](Fig/STEP4//example/Fig_mtreg_gene_tsne_CD196.pdf) [CD226](Fig/STEP4//example/Fig_mtreg_gene_tsne_CD226.pdf) [CD25](Fig/STEP4//example/Fig_mtreg_gene_tsne_CD25.pdf) [CD278](Fig/STEP4//example/Fig_mtreg_gene_tsne_CD278.pdf) [CD279](Fig/STEP4//example/Fig_mtreg_gene_tsne_CD279.pdf) [CD366](Fig/STEP4//example/Fig_mtreg_gene_tsne_CD366.pdf) [CD6](Fig/STEP4//example/Fig_mtreg_gene_tsne_CD6.pdf) [CD74](Fig/STEP4//example/Fig_mtreg_gene_tsne_CD74.pdf) [FAS](Fig/STEP4//example/Fig_mtreg_gene_tsne_FAS.pdf) [BRD9](Fig/STEP4//example/Fig_mtreg_gene_tsne_BRD9.pdf) [IKZF2](Fig/STEP4//example/Fig_mtreg_gene_tsne_IKZF2.pdf) [FOXP3](Fig/STEP4//example/Fig_mtreg_gene_tsne_FOXP3.pdf) [SIRT2](Fig/STEP4//example/Fig_mtreg_gene_tsne_SIRT2.pdf) [TBX21](Fig/STEP4//example/Fig_mtreg_gene_tsne_TBX21.pdf) [FOSL2](Fig/STEP4//example/Fig_mtreg_gene_tsne_FOSL2.pdf) [KEAP1](Fig/STEP4//example/Fig_mtreg_gene_tsne_KEAP1.pdf) [TCF7](Fig/STEP4//example/Fig_mtreg_gene_tsne_TCF7.pdf) [LAG3](Fig/STEP4//example/Fig_mtreg_gene_tsne_LAG3.pdf) [LYZ](Fig/STEP4//example/Fig_mtreg_gene_tsne_LYZ.pdf) [CD40LG](Fig/STEP4//example/Fig_mtreg_gene_tsne_CD40LG.pdf) [CTSH](Fig/STEP4//example/Fig_mtreg_gene_tsne_CTSH.pdf) [GSDMD](Fig/STEP4//example/Fig_mtreg_gene_tsne_GSDMD.pdf) [GATA3](Fig/STEP4//example/Fig_mtreg_gene_tsne_GATA3.pdf) [KLRB1](Fig/STEP4//example/Fig_mtreg_gene_tsne_KLRB1.pdf) [BACH2](Fig/STEP4//example/Fig_mtreg_gene_tsne_BACH2.pdf) [CCR6](Fig/STEP4//example/Fig_mtreg_gene_tsne_CCR6.pdf) [GZMK](Fig/STEP4//example/Fig_mtreg_gene_tsne_GZMK.pdf) [HDAC1](Fig/STEP4//example/Fig_mtreg_gene_tsne_HDAC1.pdf) [SGK1](Fig/STEP4//example/Fig_mtreg_gene_tsne_SGK1.pdf) [MT2A](Fig/STEP4//example/Fig_mtreg_gene_tsne_MT2A.pdf) [S1PR4](Fig/STEP4//example/Fig_mtreg_gene_tsne_S1PR4.pdf) [CCR7](Fig/STEP4//example/Fig_mtreg_gene_tsne_CCR7.pdf) [NR1D1](Fig/STEP4//example/Fig_mtreg_gene_tsne_NR1D1.pdf) [MAP1S](Fig/STEP4//example/Fig_mtreg_gene_tsne_MAP1S.pdf) [IL2RA](Fig/STEP4//example/Fig_mtreg_gene_tsne_IL2RA.pdf) [ITM2C](Fig/STEP4//example/Fig_mtreg_gene_tsne_ITM2C.pdf) [MYC](Fig/STEP4//example/Fig_mtreg_gene_tsne_MYC.pdf) [C1orf162](Fig/STEP4//example/Fig_mtreg_gene_tsne_C1orf162.pdf) [RORC](Fig/STEP4//example/Fig_mtreg_gene_tsne_RORC.pdf) [PSPH](Fig/STEP4//example/Fig_mtreg_gene_tsne_PSPH.pdf) [CDKN2A](Fig/STEP4//example/Fig_mtreg_gene_tsne_CDKN2A.pdf) [FLI1](Fig/STEP4//example/Fig_mtreg_gene_tsne_FLI1.pdf) [BATF](Fig/STEP4//example/Fig_mtreg_gene_tsne_BATF.pdf) [TNFRSF14](Fig/STEP4//example/Fig_mtreg_gene_tsne_TNFRSF14.pdf) [IFNGR2](Fig/STEP4//example/Fig_mtreg_gene_tsne_IFNGR2.pdf) [CXCR5](Fig/STEP4//example/Fig_mtreg_gene_tsne_CXCR5.pdf) [LMNA](Fig/STEP4//example/Fig_mtreg_gene_tsne_LMNA.pdf) [GBP4](Fig/STEP4//example/Fig_mtreg_gene_tsne_GBP4.pdf) [CTLA4](Fig/STEP4//example/Fig_mtreg_gene_tsne_CTLA4.pdf) [HPGD](Fig/STEP4//example/Fig_mtreg_gene_tsne_HPGD.pdf) [CDCA7L](Fig/STEP4//example/Fig_mtreg_gene_tsne_CDCA7L.pdf) [ABCA1](Fig/STEP4//example/Fig_mtreg_gene_tsne_ABCA1.pdf) [IRF2](Fig/STEP4//example/Fig_mtreg_gene_tsne_IRF2.pdf) [GPR25](Fig/STEP4//example/Fig_mtreg_gene_tsne_GPR25.pdf) [ISG20](Fig/STEP4//example/Fig_mtreg_gene_tsne_ISG20.pdf) [JUN](Fig/STEP4//example/Fig_mtreg_gene_tsne_JUN.pdf) [CD28](Fig/STEP4//example/Fig_mtreg_gene_tsne_CD28.pdf) [CCR8](Fig/STEP4//example/Fig_mtreg_gene_tsne_CCR8.pdf) [TIGIT](Fig/STEP4//example/Fig_mtreg_gene_tsne_TIGIT.pdf) [SATB1](Fig/STEP4//example/Fig_mtreg_gene_tsne_SATB1.pdf) [ANXA2](Fig/STEP4//example/Fig_mtreg_gene_tsne_ANXA2.pdf) [CCR4](Fig/STEP4//example/Fig_mtreg_gene_tsne_CCR4.pdf) [CXCR3](Fig/STEP4//example/Fig_mtreg_gene_tsne_CXCR3.pdf) [TNFRSF4](Fig/STEP4//example/Fig_mtreg_gene_tsne_TNFRSF4.pdf) [PDCD1](Fig/STEP4//example/Fig_mtreg_gene_tsne_PDCD1.pdf) [FHIT](Fig/STEP4//example/Fig_mtreg_gene_tsne_FHIT.pdf) [HLA-DRB1](Fig/STEP4//example/Fig_mtreg_gene_tsne_HLA-DRB1.pdf) [S100A4](Fig/STEP4//example/Fig_mtreg_gene_tsne_S100A4.pdf) [HLA-DRA](Fig/STEP4//example/Fig_mtreg_gene_tsne_HLA-DRA.pdf) [APOBEC3G](Fig/STEP4//example/Fig_mtreg_gene_tsne_APOBEC3G.pdf) [HLA-DR](Fig/STEP4//example/Fig_mtreg_gene_tsne_HLA-DR.pdf) 
-
 ### E. Basic statistics
 
 
@@ -868,7 +793,18 @@ for(g in unique(x.melt$gene)) {
     mutate(membership = as.factor(membership)) %>% 
     .sum.stat.batch()
 
-plt <- .plt.sum.stat(.stat) + ggtitle("mtreg")
+plt <- .plt.sum.stat(.stat, .cols=mtreg.cols, show.prop = T) + ggtitle("mtreg")
+print(plt)
+```
+
+![](Fig/STEP4/Fig_count_mtreg_prop-1.png)<!-- -->
+
+
+[PDF](Fig/STEP4//Fig_count_mtreg_prop.pdf)
+
+
+```r
+plt <- .plt.sum.stat(.stat, .cols=mtreg.cols, show.prop = F) + ggtitle("mtreg")
 print(plt)
 ```
 
@@ -887,7 +823,18 @@ print(plt)
     .sum.stat.tot() %>%
     mutate(batch = "(N=" %&% num.int(sum(.stat$N)) %&% ")")
 
-plt <- .plt.sum.stat(.stat.tot) + ggtitle("mtreg")
+plt <- .plt.sum.stat(.stat.tot, .cols=mtreg.cols, show.prop = T) + ggtitle("mtreg")
+print(plt)
+```
+
+![](Fig/STEP4/Fig_count_merged_mtreg_prop-1.png)<!-- -->
+
+
+[PDF](Fig/STEP4//Fig_count_merged_mtreg_prop.pdf)
+
+
+```r
+plt <- .plt.sum.stat(.stat.tot, .cols=mtreg.cols, show.prop = F) + ggtitle("mtreg")
 print(plt)
 ```
 
@@ -895,4 +842,3 @@ print(plt)
 
 
 [PDF](Fig/STEP4//Fig_count_merged_mtreg_tot.pdf)
-

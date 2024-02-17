@@ -1,6 +1,6 @@
 ---
 title: "Step 2: cell type annotation"
-date: "2024-02-11"
+date: "2024-02-16"
 author: Yongjin Park
 bibliography: "MS_Ref.bib"
 output:
@@ -19,6 +19,11 @@ output:
 ```r
 .hdr <- "result/step1/final_matrix"
 .data <- fileset.list(.hdr)
+
+.hash.hdr <- "result/step1/hash"
+.hash.data <- fileset.list(.hash.hdr)
+.hash.info <- read.hash(.hash.data) %>%
+    dplyr::select(-hash)
 ```
 
 ## 0. Surface Marker Proteins
@@ -144,6 +149,7 @@ if.needed(.file, {
 })
 umap.dt <- fread(.file) %>% 
     left_join(final.cell.type) %>% 
+    left_join(.hash.info) %>% 
     na.omit()
 ```
 
@@ -163,6 +169,7 @@ if.needed(.file, {
 })
 tsne.dt <- fread(.file) %>%
     left_join(final.cell.type) %>%
+    left_join(.hash.info) %>% 
     na.omit()
 ```
 
@@ -188,7 +195,13 @@ p3 <- .gg.plot(umap.dt[sample(.N)], aes(UMAP1, UMAP2, color=as.factor(membership
     ggtitle("clustering") +
     scale_color_brewer("", palette = "Set1")
 
-plt <- p1 | p2 | p3
+p4 <- .gg.plot(umap.dt[sample(.N)], aes(UMAP1, UMAP2, color=as.factor(disease))) +
+    ggrastr::rasterise(geom_point(stroke = 0, size=1), dpi=300) +
+    theme(legend.position = c(0,0), legend.justification = c(0,0)) +
+    ggtitle("clustering") +
+    scale_color_brewer("", palette = "Dark2")
+
+plt <- p1 | p2 | p3 | p4
 print(plt)
 ```
 
@@ -223,7 +236,14 @@ p3 <-
     ggtitle("clustering") +
     scale_color_brewer("", palette = "Set1")
 
-plt <- p1 | p2 | p3
+p4 <-
+    .gg.plot(tsne.dt[sample(.N)], aes(tSNE1, tSNE2, color=disease)) +
+    ggrastr::rasterise(geom_point(stroke = 0, size=1), dpi=300) +
+    theme(legend.position = c(0,0), legend.justification = c(0,0)) +
+    ggtitle("clustering") +
+    scale_color_brewer("", palette = "Dark2")
+
+plt <- p1 | p2 | p3 | p4
 print(plt)
 ```
 
@@ -471,13 +491,6 @@ for(g in .markers){
 ## 5. Basic statistics for the first round annotation (22,403 cells)
 
 
-
-
-```r
-.hash.hdr <- "result/step1/hash"
-.hash.data <- fileset.list(.hash.hdr)
-.hash.info <- read.hash(.hash.data)
-```
 
 ![](Fig/STEP2/Fig_count_stat_tot-1.png)<!-- -->
 
