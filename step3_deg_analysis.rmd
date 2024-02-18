@@ -620,6 +620,8 @@ show.each.gene <- function(g, .data, .stat, .cutoff = 2) {
                 ymin = mu - 2 * se,
                 ymax = mu + 2 * se)
 
+    lpv.max <- max(-log10(pmax(.temp$pv, 1e-20)) + 6)
+
     p2 <-
         .gg.plot(.temp, .aes) +
         theme(axis.text.x = element_text(angle=90, hjust = 1, vjust= .5)) +
@@ -627,9 +629,9 @@ show.each.gene <- function(g, .data, .stat, .cutoff = 2) {
         .scale.y + ylab("fold change") + xlab("") +
         geom_hline(yintercept = 0, lty = 2, linewidth = .5, colour = "black") +
         geom_linerange(linewidth = .2) +
-        geom_point(aes(fill = variable, stroke = .2, size = -log10(pv)), pch = 21) +
+        geom_point(aes(fill = variable, stroke = .2, size = -log10(pmax(pv, 1e-20))), pch = 21) +
         scale_fill_brewer(palette = "Greens", guide="none") +
-        scale_size_continuous("p-value", range=c(.5, 2.5), breaks=seq(0, 10, 2), labels = function(x) 10^(-x))
+        scale_size_continuous("p-value", range=c(.5, 2.5), breaks=seq(0, lpv.max, 1), labels = function(x) 10^(-x))
 
     plt <- (p1 / p2) + patchwork::plot_layout(heights = c(4,2))
     return(plt)
