@@ -10,6 +10,12 @@ output:
     self_contained: true
 ---
 
+```{r include = F}
+## unlink("result/step3",recursive = T)
+## unlink("Fig/STEP3",recursive = T)
+## unlink("Tab/DEG_MS_vs_HC.txt.gz")
+```
+
 ```{r GlobOpt, include=FALSE}
 fig.dir = 'Fig/STEP3/'
 knitr::opts_knit$set(eval.after = 'fig.cap')
@@ -27,7 +33,8 @@ source("Util-alg.R")
 ```
 
 ```{r read_data_info}
-.data <- fileset.list("result/step1/final_matrix")
+.data <- fileset.list("result/step1/matrix")
+.mkdir("result/step3")
 ```
 
 ```{r read_hash_data}
@@ -41,7 +48,7 @@ source("Util-alg.R")
 ## 1. MS vs. HC at the major cell type level
 
 ```{r read_annotation}
-final.cell.type <- 
+final.cell.type <-
      fread("Tab/step2_cell_type.txt.gz") %>%
      left_join(.hash.info) %>%
      na.omit()
@@ -128,11 +135,41 @@ summarize.deg <- function(.dt, tot.cutoff = 10, disease.name = "MS", control.nam
         }) %>%
         mutate(z = ADE/ADE.se) %>%
         mutate(pv = 2 * pnorm(abs(z), lower.tail=FALSE)) %>%
+        group_by(celltype) %>%
         mutate(fwer = p.adjust(pv, "holm")) %>%
         mutate(fdr = p.adjust(pv, "fdr")) %>%
+        ungroup() %>%
         as.data.table
 
     left_join(ADE.dt, ADD.dt) %>% left_join(ADC.dt) %>% as.data.table
+}
+
+format.deg.tab <- function(deg.tab, fig.hdr){
+
+    .deg.cast <- function(.dt, .var, .fun = mean){
+        .dt %>%
+            mutate(k = .var %&% "_" %&% celltype) %>%
+            dcast(ensembl_gene_id + hgnc_symbol ~ k,
+                  value.var = .var,
+                  fun.aggregate=.fun)
+    }
+
+    ret <-
+        .deg.cast(deg.tab, "z", .fun = function(x) num.round(mean(x,na.rm=T))) %>%
+        left_join(.deg.cast(deg.tab, "pv", .fun = function(x) num.sci(min(x,na.rm=T)))) %>%
+        left_join(.deg.cast(deg.tab, "fwer", .fun = function(x) num.sci(min(x,na.rm=T)))) %>%
+        as.data.table()
+
+    ret[, .file := fig.hdr %&%
+              ensembl_gene_id %&% "_" %&%
+              hgnc_symbol %&% ".pdf"]
+
+    ret[, .link := "[PDF](" %&% .file %&% ") "]
+    ret[, .file := NULL]
+
+    ret[!str_starts(ensembl_gene_id, "ENSG"), ensembl_gene_id := ""]
+
+    return(ret)
 }
 ```
 
@@ -150,9 +187,71 @@ if.needed(.deg.data, {
                                           "result/step3/deg/hc_ms")
 })
 ```
+### b. Gene Q/C to remove genes with too many zeros
+
+```{r}
+nnz.cutoff <- 500
+cv.cutoff <- 1.0
+```
+
+```{r gene_score_for_qc}
+.scores <- rcpp_mmutil_compute_scores(.deg.data$mtx,
+                                      .deg.data$row,
+                                      .deg.data$col)
+
+row.scores <- setDT(.scores$row) %>%
+    rename(gene = name) %>%                      # 
+    filter(!str_detect(`gene`,"[Hh]ashtag")) %>% # remove hashtag
+    as.data.table() %>%
+    parse.gene()
+```
+
+```{r Fig_gene_scores, fig.width=4, fig.height=4}
+.genes.interest <- c("PRDM1", "SGK1", "LBH", "DDIT4","GIMAP7","ID3","ICAM2")
+.lab.dt <- row.scores[hgnc_symbol %in% .genes.interest]
+
+plt <-
+    ggplot(row.scores, aes(log1p(nnz), log1p(cv))) +
+    theme_classic() +
+    stat_density_2d(geom = "raster",
+                    aes(fill = after_stat(sqrt(density))),
+                    show.legend=F,
+                    contour=F) +
+    scale_fill_viridis_c() +
+    geom_vline(xintercept = log1p(nnz.cutoff), col=2, lty = 2) +
+    geom_hline(yintercept = log1p(cv.cutoff), col=2, lty = 2) +
+    stat_density2d(linewidth=.2, colour="white") +
+        geom_point(data=.lab.dt, pch=19, col="white", stroke=0, size=2) +
+        geom_text_repel(aes(label=hgnc_symbol), data=.lab.dt, size=4, min.segment.length = .01, segment.color="white", color="white") +
+    scale_x_continuous("Number of Non zeros", labels = function(x) num.sci(round(10^x))) +
+    scale_y_continuous("Coefficient of variation", labels = function(x) num.sci(10^x))
+
+print(plt)
+```
+
+```{r results="asis", echo = F}
+.file <- fig.dir %&% "/Fig_gene_scrores.pdf"
+.gg.save(filename = .file, plot = plt, width=4, height=4)
+```
+
+```{r filter_deg_data_qc}
+qc.features <- row.scores[nnz > nnz.cutoff & cv > cv.cutoff]
+
+.qc.hdr <- "result/step3/deg/qc_mc_ms"
+.qc.data <- fileset.list(.qc.hdr)
+
+if.needed(.qc.data, {
+    .qc.data <-
+        rcpp_mmutil_copy_selected_rows(.deg.data$mtx,
+                                       .deg.data$row,
+                                       .deg.data$col,
+                                       qc.features$gene,
+                                       .qc.hdr)
+})
+```
 
 ```{r estimate_deg_statistics}
-.file <- "result/step3/deg/hc_ms.rds"
+.file <- "result/step3/hc_ms.rds"
 if.needed(.file,
 {
     ## cell types
@@ -161,7 +260,7 @@ if.needed(.file,
         select(tag, celltype) %>%
         as.data.frame()
     ## cell -> individual
-    .cell2indv <- final.cell.type %>% 
+    .cell2indv <- final.cell.type %>%
         left_join(.hash.info) %>%
         select(tag, subject) %>%
         unique %>%
@@ -173,8 +272,8 @@ if.needed(.file,
         as.data.frame()
 
     .deg.stat <-
-        make.cocoa(.deg.data, .celltype, .cell2indv, .indv2exp,
-                   knn = 50, .rank = 50, .take.ln = TRUE,
+        make.cocoa(.qc.data, .celltype, .cell2indv, .indv2exp,
+                   knn = 100, .rank = 15, .take.ln = TRUE,
                    impute.by.knn = TRUE, num.threads = 16)
     ## save for computed results
     saveRDS(.deg.stat, .file)
@@ -190,27 +289,29 @@ if.needed(.file,
          cfa.sd = sort.col(.deg.stat$resid.ln.mu.sd, .cts, .indvs)) %>%
     combine.statistics() %>%
     na.omit() %>%
-    as.data.table() %>% 
+    as.data.table() %>%
     (function(x) {
         x[, c("sample", "celltype") := tstrsplit(as.character(Var2), split="_")];
         x[, disease := substr(`sample`, 1, 2)];
         x[, gene := as.character(Var1)];
         x
-    }) %>% 
-    dplyr::select(-Var1, -Var2) %>% 
+    }) %>%
+    dplyr::select(-Var1, -Var2) %>%
     as.data.table()
 
 hc.ms.deg <-
-    summarize.deg(.hc.ms.dt, tot.cutoff = 10) %>%
+    summarize.deg(.hc.ms.dt, tot.cutoff = 5) %>%
+    as.data.table() %>%
     parse.gene()
 ```
 
 ```{r Fig_DEG_hist, fig.width=5, fig.height=3}
 plt <-
     .gg.plot(hc.ms.deg, aes(pv, fill=`celltype`)) +
-    geom_histogram(bins=20, linewidth=.1, color="black") +
+    geom_histogram(bins=100, linewidth=.1, color="black") +
     xlab("p-value") +
     scale_fill_brewer(palette = "Paired")
+
 print(plt)
 ```
 
@@ -228,7 +329,7 @@ if.needed(.file, {
 cat("[**DOWNLOAD:** DEG MS vs HC]("%&% .file %&% ")\n\n")
 ```
 
-### b. Comparison with the bulk DEG results
+### c. Comparison with the bulk DEG results
 
 ```{r read_bulk_deg_results}
 read.bulk <- function(.file) {
@@ -259,8 +360,8 @@ plot.bulk.sc <- function(.sc, .bulk,
     .dt <-
         left_join(.sc.uniq, .bulk) %>%
         filter(str_starts(`ensembl_gene_id`, "ENSG")) %>%
-        na.omit() %>% 
-        mutate(sc.z = z) %>% 
+        na.omit() %>%
+        mutate(sc.z = z) %>%
         na.omit %>%
         arrange(abs(sc.z)) %>%
         as.data.table
@@ -343,7 +444,7 @@ plot.bulk.sc <- function(.sc, .bulk,
 
 .out <- plot.bulk.sc(.sc,
                      .bulk,
-                     .key.genes = c("PRDM1","SGK1"),
+                     .key.genes = c("PRDM1","SGK1","LBH","CD6","JUNB"),
                      fwer.cutoff = .01,
                      qv.cutoff = .2,
                      n.top = 5)
@@ -351,7 +452,7 @@ plot.bulk.sc <- function(.sc, .bulk,
 
 ##### Correlation `r num.round(.out$cor)` with p-value = `r num.sci(.out$cor.pv)`
 
-```{r Fig_DEG_comparison_mTreg, fig.width=5, fig.height=5, echo = FALSE, results="asis"}
+```{r Fig_DEG_comparison_mTreg, fig.width=4, fig.height=7, echo = FALSE, results="asis"}
 print(.out$plt)
 .file <- fig.dir %&% "/Fig_DEG_comparison_mTreg.pdf"
 .gg.save(filename = .file, plot = .out$plt, width=5, height=5)
@@ -370,7 +471,7 @@ print(.out$plt)
 
 .out <- plot.bulk.sc(.sc,
                      .bulk,
-                     .key.genes = c("PRDM1","SGK1"),
+                     .key.genes = c("PRDM1","SGK1","LBH","CD6","JUNB"),
                      fwer.cutoff = .01,
                      qv.cutoff = .2,
                      n.top = 5)
@@ -378,7 +479,7 @@ print(.out$plt)
 
 #### Correlation `r num.round(.out$cor)` with p-value = `r num.sci(.out$cor.pv)`
 
-```{r Fig_DEG_comparison_mTconv, fig.width=5, fig.height=5, echo = FALSE, results="asis"}
+```{r Fig_DEG_comparison_mTconv, fig.width=4, fig.height=7, echo = FALSE, results="asis"}
 .file <- fig.dir %&% "/Fig_DEG_comparison_mTconv.pdf"
 print(.out$plt)
 .gg.save(filename = .file, plot = .out$plt, width=5, height=5)
@@ -433,7 +534,7 @@ print(plt)
 .gg.save(filename = .file, plot = plt, width=2, height=2)
 ```
 
-## 2. Show genes with FWER $< 10^{-2}$ overlapping with the bulk DEGs
+## 2. Show genes with FWER $< 5 \times 10^{-2}$
 
 ```{r include = F}
 show.each.gene <- function(g, .data, .stat, .cutoff = 2) {
@@ -492,8 +593,7 @@ show.each.gene <- function(g, .data, .stat, .cutoff = 2) {
         theme(legend.position = "top") +
         facet_wrap(~.facet, nrow = 1, scales="free") +
         .scale.y +
-        theme(axis.ticks.x = element_blank()) +
-        theme(axis.text.x = element_blank()) +
+        theme(axis.text.x = element_text(size=4)) +
         theme(axis.title.x = element_blank()) +
         geom_hline(yintercept = 0, linewidth = 1, colour = "gray") +
         geom_hline(data = .stat.dt, aes(yintercept = ADE), linewidth = 1, colour = "#F8766D") +
@@ -560,6 +660,19 @@ hc.ms.deg[, c("ensembl_gene_id", "hgnc_symbol") := tstrsplit(`gene`, split="_")]
 library(kableExtra)
 ```
 
+```{r incldue = F}
+hc.ms.deg[, c("ensembl_gene_id", "hgnc_symbol") := tstrsplit(`gene`, split="_")]
+
+.genes.show <-
+    hc.ms.deg[fwer < .05 &
+              sign(ADD) == sign(ADE) &
+              sign(ADC) == sign(ADE)] %>%
+    select(gene) %>%
+    unique() %>%
+    unlist() %>%
+    as.character()
+```
+
 ```{r Fig_DEG_example, include=F}
 .mkdir(fig.dir %&% "/example/")
 for(g in unique(.genes.show)){
@@ -572,26 +685,19 @@ for(g in unique(.genes.show)){
 ```
 
 ```{r Tab_DEG_FWER5, results="asis", echo = FALSE}
-data.table(gene = .genes.show) %>%
-    left_join(hc.ms.deg) %>%
-    filter(fwer < .05) %>% 
-    mutate(is.G=factor(str_starts(`gene`,"ENSG"), c(T,F), c("Gene","Ab"))) %>%
-    mutate(.file=fig.dir %&% "/example/Fig_DEG_example_" %&% gene %&% ".pdf") %>%
-    mutate(.link = "[PDF](" %&% .file %&% ") ") %>% 
-    select(celltype, hgnc_symbol, z, pv, fwer, .link) %>% 
-    mutate(z = num.round(z), pv = num.sci(pv), fwer = num.sci(fwer)) %>% 
-    arrange(celltype, pv) %>%
-    kbl() %>% 
+fig.hdr <- fig.dir %&% "/example/Fig_DEG_example_"
+deg.tab <- hc.ms.deg[gene %in% .genes.show]
+
+format.deg.tab(deg.tab, fig.hdr) %>%
+    kbl() %>%
     kable_paper("striped", full_width=F, html_font = "Helvetica") %>%
-    column_spec(1, bold = T) %>%
-    collapse_rows(columns=1, valign = "top")
-cat("\n\n\n")
+    column_spec(1, bold = T)
 ```
 
-## 4. Additional genes/proteins
+## 3. Additional genes/proteins
 
 ```{r include = F}
-.add <- c("CD279","PDCD1","LAG3","CD223","HAVCR2","TIM3","CD366","TOX","TOX2")
+.add <- c("CD279","PDCD1","LAG3","CD223","HAVCR2","TIM3","CD366","TOX","TOX2", "SGK1")
 
 additional.genes <-
     hc.ms.deg[hgnc_symbol %in% .add, .(gene)] %>%
@@ -611,19 +717,12 @@ for(g in additional.genes){
 }
 ```
 
+```{r Tab_DEG_extra, results="asis", echo = FALSE}
+fig.hdr <- fig.dir %&% "/example/Fig_DEG_example_"
+deg.tab <- hc.ms.deg[gene %in% additional.genes]
 
-```{r Tab_DEG_OTHER_GENES, results="asis", echo = FALSE}
-data.table(gene = additional.genes) %>%
-    left_join(hc.ms.deg) %>%
-    mutate(is.G=factor(str_starts(`gene`,"ENSG"), c(T,F), c("Gene","Ab"))) %>%
-    mutate(.file=fig.dir %&% "/example/Fig_DEG_example_" %&% gene %&% ".pdf") %>%
-    mutate(.link = "[PDF](" %&% .file %&% ") ") %>% 
-    select(celltype, hgnc_symbol, z, pv, fwer, .link) %>% 
-    mutate(z = num.round(z), pv = num.sci(pv), fwer = num.sci(fwer)) %>% 
-    arrange(celltype, pv) %>%
-    kbl() %>% 
+format.deg.tab(deg.tab, fig.hdr) %>%
+    kbl() %>%
     kable_paper("striped", full_width=F, html_font = "Helvetica") %>%
-    column_spec(1, bold = T) %>%
-    collapse_rows(columns=1, valign = "top")
-cat("\n\n\n")
+    column_spec(1, bold = T)
 ```

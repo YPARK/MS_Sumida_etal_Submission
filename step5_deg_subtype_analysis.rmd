@@ -186,8 +186,13 @@ annot.dt <-
     na.omit()
 ```
 
+```{r}
+nnz.cutoff <- 500
+cv.cutoff <- 1.0
+```
+
 ```{r mtconv_estimate_deg_stat}
-.data <- fileset.list("result/step1/final_matrix")
+.data <- fileset.list("result/step1/matrix")
 .deg.data <- fileset.list("result/step5/deg/mtconv_hc_ms")
 
 if.needed(.deg.data, {
@@ -197,6 +202,30 @@ if.needed(.deg.data, {
                                           .data$col,
                                           unique(annot.dt$tag),
                                           "result/step5/deg/mtconv_hc_ms")
+})
+
+.scores <- rcpp_mmutil_compute_scores(.deg.data$mtx,
+                                      .deg.data$row,
+                                      .deg.data$col)
+
+row.scores <- setDT(.scores$row) %>%
+    rename(gene = name) %>%                      # 
+    filter(!str_detect(`gene`,"[Hh]ashtag")) %>% # remove hashtag
+    as.data.table() %>%
+    parse.gene()
+
+qc.features <- row.scores[nnz > nnz.cutoff & cv > cv.cutoff]
+
+.qc.hdr <- "result/step5/deg/qc_mtconv_hc_ms"
+.qc.data <- fileset.list(.qc.hdr)
+
+if.needed(.qc.data, {
+    .qc.data <-
+        rcpp_mmutil_copy_selected_rows(.deg.data$mtx,
+                                       .deg.data$row,
+                                       .deg.data$col,
+                                       qc.features$gene,
+                                       .qc.hdr)
 })
 
 .file <- "result/step5/deg/mtconv_hc_ms.rds"
@@ -217,8 +246,8 @@ if.needed(.file, {
         as.data.frame()
 
     .deg.stat <-
-        make.cocoa(.deg.data, .membership, .cell2indv, .indv2exp,
-                   knn = 50, .rank = 50, .take.ln = TRUE,
+        make.cocoa(.qc.data, .membership, .cell2indv, .indv2exp,
+                   knn = 100, .rank = 15, .take.ln = TRUE,
                    impute.by.knn = TRUE, num.threads = 16)
 
    saveRDS(.deg.stat, .file)
@@ -362,8 +391,7 @@ show.each.gene <- function(g, .data, .stat, .cutoff = 3) {
         theme(legend.position = "top") +
         facet_wrap(~.facet, nrow = 1, scales="free") +
         .scale.y +
-        theme(axis.ticks.x = element_blank()) +
-        theme(axis.text.x = element_blank()) +
+        theme(axis.text.x = element_text(size=4)) +
         theme(axis.title.x = element_blank()) +
         geom_hline(yintercept = 0, linewidth = 1, colour = "gray") +
         geom_hline(data = .stat.dt, aes(yintercept = ADE), linewidth = 1, colour = "#F8766D") +
@@ -454,10 +482,11 @@ annot.dt <-
 ```
 
 ```{r mtreg_estimate_deg_stat}
-.data <- fileset.list("result/step1/final_matrix")
 .mkdir("result/step5/deg/")
+.data <- fileset.list("result/step1/matrix")
 .deg.data <- fileset.list("result/step5/deg/mtreg_hc_ms")
 .mkdir(dirname(.deg.data$mtx))
+
 if.needed(.deg.data, {
     .deg.data <-
         rcpp_mmutil_copy_selected_columns(.data$mtx,
@@ -465,6 +494,30 @@ if.needed(.deg.data, {
                                           .data$col,
                                           unique(annot.dt$tag),
                                           "result/step5/deg/mtreg_hc_ms")
+})
+
+.scores <- rcpp_mmutil_compute_scores(.deg.data$mtx,
+                                      .deg.data$row,
+                                      .deg.data$col)
+
+row.scores <- setDT(.scores$row) %>%
+    rename(gene = name) %>%                      # 
+    filter(!str_detect(`gene`,"[Hh]ashtag")) %>% # remove hashtag
+    as.data.table() %>%
+    parse.gene()
+
+qc.features <- row.scores[nnz > nnz.cutoff & cv > cv.cutoff]
+
+.qc.hdr <- "result/step5/deg/qc_mtreg_hc_ms"
+.qc.data <- fileset.list(.qc.hdr)
+
+if.needed(.qc.data, {
+    .qc.data <-
+        rcpp_mmutil_copy_selected_rows(.deg.data$mtx,
+                                       .deg.data$row,
+                                       .deg.data$col,
+                                       qc.features$gene,
+                                       .qc.hdr)
 })
 
 .file <- "result/step5/deg/mtreg_hc_ms.rds"
@@ -485,8 +538,8 @@ if.needed(.file, {
         as.data.frame()
 
     .deg.stat <-
-        make.cocoa(.deg.data, .membership, .cell2indv, .indv2exp,
-                   knn = 50, .rank = 50, .take.ln = TRUE,
+        make.cocoa(.qc.data, .membership, .cell2indv, .indv2exp,
+                   knn = 100, .rank = 15, .take.ln = TRUE,
                    impute.by.knn = TRUE, num.threads = 16)
 
    saveRDS(.deg.stat, .file)
