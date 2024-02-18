@@ -455,7 +455,7 @@ plot.bulk.sc <- function(.sc, .bulk,
 ```{r Fig_DEG_comparison_mTreg, fig.width=4, fig.height=7, echo = FALSE, results="asis"}
 print(.out$plt)
 .file <- fig.dir %&% "/Fig_DEG_comparison_mTreg.pdf"
-.gg.save(filename = .file, plot = .out$plt, width=5, height=5)
+.gg.save(filename = .file, plot = .out$plt, width=4, height=7)
 ```
 
 * Here, we computed correlation between the bulk and scRNA-seq results after selecting on the DEGs marginally significant in the bulk analysis ($|t| > 2$).
@@ -482,7 +482,7 @@ print(.out$plt)
 ```{r Fig_DEG_comparison_mTconv, fig.width=4, fig.height=7, echo = FALSE, results="asis"}
 .file <- fig.dir %&% "/Fig_DEG_comparison_mTconv.pdf"
 print(.out$plt)
-.gg.save(filename = .file, plot = .out$plt, width=5, height=5)
+.gg.save(filename = .file, plot = .out$plt, width=4, height=7)
 ```
 
 * Here, we computed correlation between the bulk and scRNA-seq results after selecting on the DEGs marginally significant in the bulk analysis ($|t| > 2$).
