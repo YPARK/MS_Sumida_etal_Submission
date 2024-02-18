@@ -164,19 +164,6 @@ format.deg.tab <- function(deg.tab, fig.hdr){
 major.deg.tab <- fread("Tab/DEG_MS_vs_HC.txt.gz")
 ```
 
-```{r read_bulk_deg_results}
-## read.bulk <- function(.file) {
-##     fread(.file) %>%
-##         rename(hgnc_symbol = gene_name) %>%
-##         rename(bulk.t = t, bulk.pv = P.Value, bulk.qv = adj.P.Val) %>%
-##         dplyr::select(hgnc_symbol, starts_with("bulk"))
-## }
-## .file <- "data/DEG/20180513/deg.ms.hc.treg.mem.exvivo.sex_covar.ruv.txt"
-## bulk.mTreg.dt <- read.bulk(.file)
-## .file <- "data/DEG/20180513/deg.ms.hc.teff.mem.exvivo.sex_covar.ruv.txt"
-## bulk.mTconv.dt <- read.bulk(.file)
-```
-
 # 1. mTconv subtype DEG analysis
 
 ```{r mtconv_read_annot}
@@ -187,7 +174,7 @@ annot.dt <-
 ```
 
 ```{r}
-nnz.cutoff <- 500
+nnz.cutoff <- 100
 cv.cutoff <- 1.0
 ```
 
@@ -471,6 +458,39 @@ format.deg.tab(deg.tab, fig.hdr) %>%
 cat("\n\n\n")
 ```
 
+#### Additional genes/proteins
+
+```{r include = F}
+.add <- c("CD279","PDCD1","LAG3","CD223","HAVCR2","TIM3","CD366","TOX","TOX2", "SGK1")
+
+additional.genes <-
+    hc.ms.deg[hgnc_symbol %in% .add, .(gene)] %>%
+    unique() %>%
+    unlist(use.names=F)
+```
+
+```{r Fig_mTconv_DEG_example2, include = FALSE}
+.mkdir(fig.dir %&% "/example/")
+for(g in additional.genes){
+    .file <- fig.dir %&% "/example/Fig_mTconv_DEG_example_" %&% g %&% ".pdf"
+   if.needed(.file, {
+       plt <- show.each.gene(g, .hc.ms.dt, hc.ms.deg)
+       .gg.save(filename = .file, cat.link = FALSE, plot = plt, width=4, height=3)
+   })
+}
+```
+
+```{r Tab_mTconv_DEG_extra, results="asis", echo = FALSE}
+fig.hdr <- fig.dir %&% "/example/Fig_mTconv_DEG_example_"
+deg.tab <- hc.ms.deg[gene %in% additional.genes]
+
+format.deg.tab(deg.tab, fig.hdr) %>%
+    kbl() %>%
+    kable_paper("striped", full_width=F, html_font = "Helvetica") %>%
+    column_spec(1, bold = T)
+```
+
+
 
 # 2. mTreg subtype DEG analysis
 
@@ -643,3 +663,34 @@ format.deg.tab(deg.tab, fig.hdr) %>%
 cat("\n\n\n")
 ```
 
+#### Additional genes/proteins
+
+```{r include = F}
+.add <- c("CD279","PDCD1","LAG3","CD223","HAVCR2","TIM3","CD366","TOX","TOX2", "SGK1")
+
+additional.genes <-
+    hc.ms.deg[hgnc_symbol %in% .add, .(gene)] %>%
+    unique() %>%
+    unlist(use.names=F)
+```
+
+```{r Fig_mTreg_DEG_example2, include = FALSE}
+.mkdir(fig.dir %&% "/example/")
+for(g in additional.genes){
+    .file <- fig.dir %&% "/example/Fig_mTreg_DEG_example_" %&% g %&% ".pdf"
+   if.needed(.file, {
+       plt <- show.each.gene(g, .hc.ms.dt, hc.ms.deg)
+       .gg.save(filename = .file, cat.link = FALSE, plot = plt, width=4, height=3)
+   })
+}
+```
+
+```{r Tab_mTreg_DEG_extra, results="asis", echo = FALSE}
+fig.hdr <- fig.dir %&% "/example/Fig_mTreg_DEG_example_"
+deg.tab <- hc.ms.deg[gene %in% additional.genes]
+
+format.deg.tab(deg.tab, fig.hdr) %>%
+    kbl() %>%
+    kable_paper("striped", full_width=F, html_font = "Helvetica") %>%
+    column_spec(1, bold = T)
+```
