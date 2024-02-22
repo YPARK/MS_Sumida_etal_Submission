@@ -1,6 +1,6 @@
 ---
 title: "Step 5: differential Expression analysis for sub clusters"
-date: "2024-02-17"
+date: "2024-02-22"
 author: Yongjin Park
 bibliography: "MS_Ref.bib"
 output:
@@ -4895,6 +4895,20 @@ major.deg <- major.deg.tab[fwer < .05]$hgnc_symbol
    <td style="text-align:left;"> 1.01e-03 </td>
    <td style="text-align:left;"> 9.94e-01 </td>
    <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTconv_DEG_example_CD366_CD366.pdf) </td>
+  </tr>
+  <tr>
+   <td style="text-align:left;font-weight: bold;"> ENSG00000049768 </td>
+   <td style="text-align:left;"> FOXP3 </td>
+   <td style="text-align:left;"> 0.07 </td>
+   <td style="text-align:left;"> -2.62 </td>
+   <td style="text-align:left;"> 0.12 </td>
+   <td style="text-align:left;"> 9.43e-01 </td>
+   <td style="text-align:left;"> 8.69e-03 </td>
+   <td style="text-align:left;"> 9.07e-01 </td>
+   <td style="text-align:left;"> 1e+00 </td>
+   <td style="text-align:left;"> 1.34e-01 </td>
+   <td style="text-align:left;"> 9.98e-01 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTconv_DEG_example_ENSG00000049768_FOXP3.pdf) </td>
   </tr>
   <tr>
    <td style="text-align:left;font-weight: bold;"> ENSG00000089692 </td>
@@ -10159,6 +10173,20 @@ major.deg <- major.deg.tab[fwer < .05]$hgnc_symbol
    <td style="text-align:left;"> 2.52e-02 </td>
    <td style="text-align:left;"> 9.91e-01 </td>
    <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTreg_DEG_example_CD366_CD366.pdf) </td>
+  </tr>
+  <tr>
+   <td style="text-align:left;font-weight: bold;"> ENSG00000049768 </td>
+   <td style="text-align:left;"> FOXP3 </td>
+   <td style="text-align:left;"> -0.46 </td>
+   <td style="text-align:left;"> -0.58 </td>
+   <td style="text-align:left;"> -0.45 </td>
+   <td style="text-align:left;"> 6.44e-01 </td>
+   <td style="text-align:left;"> 5.6e-01 </td>
+   <td style="text-align:left;"> 6.51e-01 </td>
+   <td style="text-align:left;"> 9.23e-01 </td>
+   <td style="text-align:left;"> 9.19e-01 </td>
+   <td style="text-align:left;"> 9.9e-01 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTreg_DEG_example_ENSG00000049768_FOXP3.pdf) </td>
   </tr>
   <tr>
    <td style="text-align:left;font-weight: bold;"> ENSG00000089692 </td>
