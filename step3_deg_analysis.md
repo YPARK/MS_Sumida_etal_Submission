@@ -1,6 +1,6 @@
 ---
 title: "Step 3: differential Expression analysis"
-date: "2024-02-17"
+date: "2024-02-22"
 author: Yongjin Park
 bibliography: "MS_Ref.bib"
 output:
@@ -7470,6 +7470,23 @@ hc.ms.deg[, c("ensembl_gene_id", "hgnc_symbol") := tstrsplit(`gene`, split="_")]
    <td style="text-align:left;"> 1e+00 </td>
    <td style="text-align:left;"> 1e+00 </td>
    <td style="text-align:left;"> [PDF](Fig/STEP3//example/Fig_DEG_example_CD366_CD366.pdf) </td>
+  </tr>
+  <tr>
+   <td style="text-align:left;font-weight: bold;"> ENSG00000049768 </td>
+   <td style="text-align:left;"> FOXP3 </td>
+   <td style="text-align:left;"> 1.04 </td>
+   <td style="text-align:left;"> 3.5 </td>
+   <td style="text-align:left;"> -2.81 </td>
+   <td style="text-align:left;"> 0.12 </td>
+   <td style="text-align:left;"> 2.97e-01 </td>
+   <td style="text-align:left;"> 4.7e-04 </td>
+   <td style="text-align:left;"> 5e-03 </td>
+   <td style="text-align:left;"> 9.06e-01 </td>
+   <td style="text-align:left;"> 1e+00 </td>
+   <td style="text-align:left;"> 1e+00 </td>
+   <td style="text-align:left;"> 1e+00 </td>
+   <td style="text-align:left;"> 1e+00 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP3//example/Fig_DEG_example_ENSG00000049768_FOXP3.pdf) </td>
   </tr>
   <tr>
    <td style="text-align:left;font-weight: bold;"> ENSG00000089692 </td>

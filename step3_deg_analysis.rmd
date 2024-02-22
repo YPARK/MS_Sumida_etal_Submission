@@ -699,7 +699,7 @@ format.deg.tab(deg.tab, fig.hdr) %>%
 ## 3. Additional genes/proteins
 
 ```{r include = F}
-.add <- c("CD279","PDCD1","LAG3","CD223","HAVCR2","TIM3","CD366","TOX","TOX2", "SGK1")
+.add <- c("CD279","PDCD1","LAG3","CD223","HAVCR2","TIM3","CD366","TOX","TOX2", "SGK1", "FOXP3")
 
 additional.genes <-
     hc.ms.deg[hgnc_symbol %in% .add, .(gene)] %>%
