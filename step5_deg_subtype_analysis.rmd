@@ -200,7 +200,41 @@ row.scores <- setDT(.scores$row) %>%
     filter(!str_detect(`gene`,"[Hh]ashtag")) %>% # remove hashtag
     as.data.table() %>%
     parse.gene()
+```
 
+### Gene-level statistics confirm that some genes are not expressed much
+
+```{r Fig_mtconv_gene_scores, fig.width=8, fig.height=3}
+.genes.interest <- c("PRDM1", "SGK1", "LBH", "DDIT4")
+
+.dt.show <- 
+    row.scores[hgnc_symbol %in% .genes.interest] %>% 
+    arrange(`nnz`) %>% 
+    mutate(x = `nnz`, y = 5000 + 100 * (1:n())) %>%
+    mutate(lab = hgnc_symbol %&% "\n(" %&% `nnz` %&% ")")
+
+plt <-
+    ggplot(row.scores, aes((`nnz`))) +
+    theme_classic() + ggtitle("Gene-level statistics: histogram of number of non-zeros") +
+    geom_histogram(fill="gray", linewidth=.1, color="gray20", bins=50) +
+    ggrepel::geom_text_repel(aes(x, y, label=lab),
+                             data=.dt.show,
+                             size = 4, color = 2, vjust=0, hjust=0) +
+    geom_vline(aes(xintercept = x), data = .dt.show, lty = 2, col = 2) +
+    scale_y_log10("count") +
+    scale_x_continuous("number of non-zero across " %&% num.int(.scores$max.col) %&% " cells",
+                       breaks = c(unique(.dt.show$x), c(0, 5000, 15000, 20000)))
+print(plt)
+```
+
+```{r results="asis"}
+.file <- fig.dir %&% "/Fig_mTconv_gene_scores_nnz.pdf"
+.gg.save(filename = .file, plot = plt, width=8, height=3)
+```
+
+### Creating Q/C'ed DEG data
+
+```{r mtconv_deg_data}
 qc.features <- row.scores[nnz > nnz.cutoff & cv > cv.cutoff]
 
 .qc.hdr <- "result/step5/deg/qc_mtconv_hc_ms"
@@ -314,6 +348,9 @@ plt <-
     scale_fill_manual(values = c("#ef8a62","#67a9cf"))
 
 print(plt)
+```
+
+```{r results="asis"}
 .file <- fig.dir %&% "/Fig_mTconv_DEG_count.pdf"
 .gg.save(filename = .file, plot = plt, width=2, height=2)
 ```
@@ -525,7 +562,41 @@ row.scores <- setDT(.scores$row) %>%
     filter(!str_detect(`gene`,"[Hh]ashtag")) %>% # remove hashtag
     as.data.table() %>%
     parse.gene()
+```
 
+### Gene-level statistics confirm that some genes are not expressed much
+
+```{r Fig_mtreg_gene_scores, fig.width=8, fig.height=3}
+.genes.interest <- c("PRDM1", "SGK1", "LBH", "DDIT4")
+
+.dt.show <- 
+    row.scores[hgnc_symbol %in% .genes.interest] %>% 
+    arrange(`nnz`) %>% 
+    mutate(x = `nnz`, y = 5000 + 100 * (1:n())) %>%
+    mutate(lab = hgnc_symbol %&% "\n(" %&% `nnz` %&% ")")
+
+plt <-
+    ggplot(row.scores, aes((`nnz`))) +
+    theme_classic() + ggtitle("Gene-level statistics: histogram of number of non-zeros") +
+    geom_histogram(fill="gray", linewidth=.1, color="gray20", bins=50) +
+    ggrepel::geom_text_repel(aes(x, y, label=lab),
+                             data=.dt.show,
+                             size = 4, color = 2, vjust=0, hjust=0) +
+    geom_vline(aes(xintercept = x), data = .dt.show, lty = 2, col = 2) +
+    scale_y_log10("count") +
+    scale_x_continuous("number of non-zero across " %&% num.int(.scores$max.col) %&% " cells",
+                       breaks = c(unique(.dt.show$x), c(0, 5000, 15000, 20000)))
+print(plt)
+```
+
+```{r results="asis"}
+.file <- fig.dir %&% "/Fig_mTreg_gene_scores_nnz.pdf"
+.gg.save(filename = .file, plot = plt, width=8, height=3)
+```
+
+### Creating Q/C'ed DEG data
+
+```{r mtreg_deg_data}
 qc.features <- row.scores[nnz > nnz.cutoff & cv > cv.cutoff]
 
 .qc.hdr <- "result/step5/deg/qc_mtreg_hc_ms"
@@ -621,6 +692,10 @@ plt <-
     scale_fill_manual(values = c("#ef8a62","#67a9cf"))
 
 print(plt)
+```
+
+
+```{r results = "asis"}
 .file <- fig.dir %&% "/Fig_mtreg_DEG_count.pdf"
 .gg.save(filename = .file, plot = plt, width=2, height=2)
 ```
@@ -666,7 +741,9 @@ cat("\n\n\n")
 #### Additional genes/proteins
 
 ```{r include = F}
-.add <- c("CD279","PDCD1","LAG3","CD223","HAVCR2","TIM3","CD366","TOX","TOX2", "SGK1", "FOXP3")
+.add <- c("CD279","PDCD1","LAG3","CD223","HAVCR2",
+          "TIM3","CD366","TOX","TOX2", "SGK1", "FOXP3",
+          "CD27", "CD28", "TRAF3IP3")
 
 additional.genes <-
     hc.ms.deg[hgnc_symbol %in% .add, .(gene)] %>%

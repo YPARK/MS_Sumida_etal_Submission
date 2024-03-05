@@ -1,6 +1,6 @@
 ---
 title: "Step 3: differential Expression analysis"
-date: "2024-02-22"
+date: "2024-03-05"
 author: Yongjin Park
 bibliography: "MS_Ref.bib"
 output:
@@ -107,6 +107,49 @@ print(plt)
 [PDF](Fig/STEP3//Fig_gene_scrores.pdf)
 
 
+### c. Show that some genes of interest are not necessarily well expressed
+
+
+
+```r
+.genes.interest <- c("PRDM1", "SGK1", "LBH", "DDIT4")
+
+.dt.show <- 
+    row.scores[hgnc_symbol %in% .genes.interest] %>% 
+    arrange(`nnz`) %>% 
+    mutate(x = `nnz`, y = 5000 + 100 * (1:n())) %>%
+    mutate(lab = hgnc_symbol %&% "\n(" %&% `nnz` %&% ")")
+
+plt <-
+    ggplot(row.scores, aes((`nnz`))) +
+    theme_classic() + ggtitle("Gene-level statistics: histogram of number of non-zeros") +
+    geom_histogram(fill="gray", linewidth=.1, color="gray20", bins=50) +
+    ggrepel::geom_text_repel(aes(x, y, label=lab),
+                             data=.dt.show,
+                             size = 4, color = 2, vjust=0, hjust=0) +
+    geom_vline(aes(xintercept = x), data = .dt.show, lty = 2, col = 2) +
+    scale_y_log10("count") +
+    scale_x_continuous("number of non-zero across " %&% num.int(.scores$max.col) %&% " cells",
+                       breaks = c(unique(.dt.show$x), c(1, 5000, 15000, 20000)))
+print(plt)
+```
+
+![](Fig/STEP3/Fig_gene_scores_subset-1.png)<!-- -->
+
+
+
+```r
+.file <- fig.dir %&% "/Fig_gene_scores_nnz.pdf"
+.gg.save(filename = .file, plot = plt, width=8, height=3)
+```
+
+
+
+[PDF](Fig/STEP3//Fig_gene_scores_nnz.pdf)
+
+### d. Compute DEG statistics while adjusting batch effects
+
+
 ```r
 qc.features <- row.scores[nnz > nnz.cutoff & cv > cv.cutoff]
 
@@ -197,7 +240,7 @@ print(plt)
 
 [**DOWNLOAD:** DEG MS vs HC](Tab/DEG_MS_vs_HC.txt.gz)
 
-### c. Comparison with the bulk DEG results
+### e. Comparison with the bulk DEG results
 
 
 ```r
@@ -7521,6 +7564,40 @@ hc.ms.deg[, c("ensembl_gene_id", "hgnc_symbol") := tstrsplit(`gene`, split="_")]
    <td style="text-align:left;"> 7.28e-01 </td>
    <td style="text-align:left;"> 1e+00 </td>
    <td style="text-align:left;"> [PDF](Fig/STEP3//example/Fig_DEG_example_ENSG00000118515_SGK1.pdf) </td>
+  </tr>
+  <tr>
+   <td style="text-align:left;font-weight: bold;"> ENSG00000139193 </td>
+   <td style="text-align:left;"> CD27 </td>
+   <td style="text-align:left;"> -1.1 </td>
+   <td style="text-align:left;"> -0.06 </td>
+   <td style="text-align:left;"> -1.09 </td>
+   <td style="text-align:left;"> -2.68 </td>
+   <td style="text-align:left;"> 2.73e-01 </td>
+   <td style="text-align:left;"> 9.56e-01 </td>
+   <td style="text-align:left;"> 2.78e-01 </td>
+   <td style="text-align:left;"> 7.46e-03 </td>
+   <td style="text-align:left;"> 1e+00 </td>
+   <td style="text-align:left;"> 1e+00 </td>
+   <td style="text-align:left;"> 1e+00 </td>
+   <td style="text-align:left;"> 1e+00 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP3//example/Fig_DEG_example_ENSG00000139193_CD27.pdf) </td>
+  </tr>
+  <tr>
+   <td style="text-align:left;font-weight: bold;"> ENSG00000178562 </td>
+   <td style="text-align:left;"> CD28 </td>
+   <td style="text-align:left;"> -0.19 </td>
+   <td style="text-align:left;"> -2.38 </td>
+   <td style="text-align:left;"> -3.39 </td>
+   <td style="text-align:left;"> -0.53 </td>
+   <td style="text-align:left;"> 8.49e-01 </td>
+   <td style="text-align:left;"> 1.72e-02 </td>
+   <td style="text-align:left;"> 7.05e-04 </td>
+   <td style="text-align:left;"> 5.97e-01 </td>
+   <td style="text-align:left;"> 1e+00 </td>
+   <td style="text-align:left;"> 1e+00 </td>
+   <td style="text-align:left;"> 1e+00 </td>
+   <td style="text-align:left;"> 1e+00 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP3//example/Fig_DEG_example_ENSG00000178562_CD28.pdf) </td>
   </tr>
   <tr>
    <td style="text-align:left;font-weight: bold;"> ENSG00000188389 </td>

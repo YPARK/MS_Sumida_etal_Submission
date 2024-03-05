@@ -1,6 +1,6 @@
 ---
 title: "Step 5: differential Expression analysis for sub clusters"
-date: "2024-02-22"
+date: "2024-03-05"
 author: Yongjin Park
 bibliography: "MS_Ref.bib"
 output:
@@ -69,7 +69,50 @@ row.scores <- setDT(.scores$row) %>%
     filter(!str_detect(`gene`,"[Hh]ashtag")) %>% # remove hashtag
     as.data.table() %>%
     parse.gene()
+```
 
+### Gene-level statistics confirm that some genes are not expressed much
+
+
+```r
+.genes.interest <- c("PRDM1", "SGK1", "LBH", "DDIT4")
+
+.dt.show <- 
+    row.scores[hgnc_symbol %in% .genes.interest] %>% 
+    arrange(`nnz`) %>% 
+    mutate(x = `nnz`, y = 5000 + 100 * (1:n())) %>%
+    mutate(lab = hgnc_symbol %&% "\n(" %&% `nnz` %&% ")")
+
+plt <-
+    ggplot(row.scores, aes((`nnz`))) +
+    theme_classic() + ggtitle("Gene-level statistics: histogram of number of non-zeros") +
+    geom_histogram(fill="gray", linewidth=.1, color="gray20", bins=50) +
+    ggrepel::geom_text_repel(aes(x, y, label=lab),
+                             data=.dt.show,
+                             size = 4, color = 2, vjust=0, hjust=0) +
+    geom_vline(aes(xintercept = x), data = .dt.show, lty = 2, col = 2) +
+    scale_y_log10("count") +
+    scale_x_continuous("number of non-zero across " %&% num.int(.scores$max.col) %&% " cells",
+                       breaks = c(unique(.dt.show$x), c(0, 5000, 15000, 20000)))
+print(plt)
+```
+
+![](Fig/STEP5/Fig_mtconv_gene_scores-1.png)<!-- -->
+
+
+```r
+.file <- fig.dir %&% "/Fig_mTconv_gene_scores_nnz.pdf"
+.gg.save(filename = .file, plot = plt, width=8, height=3)
+```
+
+
+
+[PDF](Fig/STEP5//Fig_mTconv_gene_scores_nnz.pdf)
+
+### Creating Q/C'ed DEG data
+
+
+```r
 qc.features <- row.scores[nnz > nnz.cutoff & cv > cv.cutoff]
 
 .qc.hdr <- "result/step5/deg/qc_mtconv_hc_ms"
@@ -164,6 +207,14 @@ count.deg <- function(.dt, fdr.cutoff = .1) {
 ```
 
 ![](Fig/STEP5/Fig_mTconv_DEG_count-1.png)<!-- -->
+
+
+```r
+.file <- fig.dir %&% "/Fig_mTconv_DEG_count.pdf"
+.gg.save(filename = .file, plot = plt, width=2, height=2)
+```
+
+
 
 [PDF](Fig/STEP5//Fig_mTconv_DEG_count.pdf)
 
@@ -5006,7 +5057,50 @@ row.scores <- setDT(.scores$row) %>%
     filter(!str_detect(`gene`,"[Hh]ashtag")) %>% # remove hashtag
     as.data.table() %>%
     parse.gene()
+```
 
+### Gene-level statistics confirm that some genes are not expressed much
+
+
+```r
+.genes.interest <- c("PRDM1", "SGK1", "LBH", "DDIT4")
+
+.dt.show <- 
+    row.scores[hgnc_symbol %in% .genes.interest] %>% 
+    arrange(`nnz`) %>% 
+    mutate(x = `nnz`, y = 5000 + 100 * (1:n())) %>%
+    mutate(lab = hgnc_symbol %&% "\n(" %&% `nnz` %&% ")")
+
+plt <-
+    ggplot(row.scores, aes((`nnz`))) +
+    theme_classic() + ggtitle("Gene-level statistics: histogram of number of non-zeros") +
+    geom_histogram(fill="gray", linewidth=.1, color="gray20", bins=50) +
+    ggrepel::geom_text_repel(aes(x, y, label=lab),
+                             data=.dt.show,
+                             size = 4, color = 2, vjust=0, hjust=0) +
+    geom_vline(aes(xintercept = x), data = .dt.show, lty = 2, col = 2) +
+    scale_y_log10("count") +
+    scale_x_continuous("number of non-zero across " %&% num.int(.scores$max.col) %&% " cells",
+                       breaks = c(unique(.dt.show$x), c(0, 5000, 15000, 20000)))
+print(plt)
+```
+
+![](Fig/STEP5/Fig_mtreg_gene_scores-1.png)<!-- -->
+
+
+```r
+.file <- fig.dir %&% "/Fig_mTreg_gene_scores_nnz.pdf"
+.gg.save(filename = .file, plot = plt, width=8, height=3)
+```
+
+
+
+[PDF](Fig/STEP5//Fig_mTreg_gene_scores_nnz.pdf)
+
+### Creating Q/C'ed DEG data
+
+
+```r
 qc.features <- row.scores[nnz > nnz.cutoff & cv > cv.cutoff]
 
 .qc.hdr <- "result/step5/deg/qc_mtreg_hc_ms"
@@ -5082,6 +5176,15 @@ hc.ms.deg <-
 * Total pairs of genes and clusters: 27,788
 
 ![](Fig/STEP5/Fig_mTreg_DEG_count-1.png)<!-- -->
+
+
+
+```r
+.file <- fig.dir %&% "/Fig_mtreg_DEG_count.pdf"
+.gg.save(filename = .file, plot = plt, width=2, height=2)
+```
+
+
 
 [PDF](Fig/STEP5//Fig_mtreg_DEG_count.pdf)
 
@@ -10243,6 +10346,34 @@ major.deg <- major.deg.tab[fwer < .05]$hgnc_symbol
    <td style="text-align:left;"> 8.43e-01 </td>
    <td style="text-align:left;"> 9.46e-01 </td>
    <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTreg_DEG_example_ENSG00000135077_HAVCR2.pdf) </td>
+  </tr>
+  <tr>
+   <td style="text-align:left;font-weight: bold;"> ENSG00000139193 </td>
+   <td style="text-align:left;"> CD27 </td>
+   <td style="text-align:left;"> -1.35 </td>
+   <td style="text-align:left;"> -0.73 </td>
+   <td style="text-align:left;"> -2.79 </td>
+   <td style="text-align:left;"> 1.78e-01 </td>
+   <td style="text-align:left;"> 4.68e-01 </td>
+   <td style="text-align:left;"> 5.34e-03 </td>
+   <td style="text-align:left;"> 6.36e-01 </td>
+   <td style="text-align:left;"> 8.86e-01 </td>
+   <td style="text-align:left;"> 1.84e-01 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTreg_DEG_example_ENSG00000139193_CD27.pdf) </td>
+  </tr>
+  <tr>
+   <td style="text-align:left;font-weight: bold;"> ENSG00000178562 </td>
+   <td style="text-align:left;"> CD28 </td>
+   <td style="text-align:left;"> -0.24 </td>
+   <td style="text-align:left;"> -4.22 </td>
+   <td style="text-align:left;"> -0.25 </td>
+   <td style="text-align:left;"> 8.1e-01 </td>
+   <td style="text-align:left;"> 2.48e-05 </td>
+   <td style="text-align:left;"> 8.04e-01 </td>
+   <td style="text-align:left;"> 9.7e-01 </td>
+   <td style="text-align:left;"> 1.76e-03 </td>
+   <td style="text-align:left;"> 1e+00 </td>
+   <td style="text-align:left;"> [PDF](Fig/STEP5//example/Fig_mTreg_DEG_example_ENSG00000178562_CD28.pdf) </td>
   </tr>
   <tr>
    <td style="text-align:left;font-weight: bold;"> ENSG00000188389 </td>

@@ -17,9 +17,9 @@ num.sci <- function(x) format(x, digits = 3, scientific = TRUE)
 
 num.round <- function(x, d=2) round(x, digits = d) %>% as.character()
 
-num.int <- function(x) format(x, big.mark = ',')
+num.int <- function(x) format(x, big.mark = ",")
 
-.gsub.rm <- function(x, pat) gsub(x, pattern = pat, replacement = '')
+.gsub.rm <- function(x, pat) gsub(x, pattern = pat, replacement = "")
 
 .unlist <- function(...) unlist(..., use.names = FALSE)
 
