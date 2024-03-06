@@ -191,7 +191,7 @@ if.needed(.deg.data, {
 
 ```{r}
 nnz.cutoff <- 500
-cv.cutoff <- 1.0
+cv.cutoff <- .8
 ```
 
 ```{r gene_score_for_qc}
@@ -272,7 +272,7 @@ print(plt)
 ```{r filter_deg_data_qc}
 qc.features <- row.scores[nnz > nnz.cutoff & cv > cv.cutoff]
 
-.qc.hdr <- "result/step3/deg/qc_mc_ms"
+.qc.hdr <- "result/step3/deg/qc_hc_ms"
 .qc.data <- fileset.list(.qc.hdr)
 
 if.needed(.qc.data, {
@@ -655,7 +655,7 @@ show.each.gene <- function(g, .data, .stat, .cutoff = 2) {
                 ymin = mu - 2 * se,
                 ymax = mu + 2 * se)
 
-    lpv.max <- max(-log10(pmax(.temp$pv, 1e-20)) + 6)
+    lpv.max <- max(-log10(pmax(.temp$pv, 1e-20, na.rm=T)) + 6)
 
     p2 <-
         .gg.plot(.temp, .aes) +
@@ -765,3 +765,19 @@ format.deg.tab(deg.tab, fig.hdr) %>%
     kable_paper("striped", full_width=F, html_font = "Helvetica") %>%
     column_spec(1, bold = T)
 ```
+
+## 4. Differential Expression Analysis for PRDM1-short vs. long
+
+```{r}
+.data.file <- "data/PRDM1/PRDM1_SL.csv.gz"
+
+.data <-
+    fread(.data.file) %>%
+    mutate(tag = `CB+batch`) %>%
+    parse.tag() %>%
+    select(PRDM1_short, PRDM1_long, barcode, batch) %>% 
+    left_join(final.cell.type) %>%
+    na.omit()
+
+```
+

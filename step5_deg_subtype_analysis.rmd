@@ -175,7 +175,7 @@ annot.dt <-
 
 ```{r}
 nnz.cutoff <- 100
-cv.cutoff <- 1.0
+cv.cutoff <- 0.8
 ```
 
 ```{r mtconv_estimate_deg_stat}
