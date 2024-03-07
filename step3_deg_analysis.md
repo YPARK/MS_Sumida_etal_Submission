@@ -285,7 +285,7 @@ bulk.mTconv.dt <- read.bulk(.file)
 
 .out <- plot.bulk.sc(.sc,
                      .bulk,
-                     .key.genes = c("PRDM1","SGK1","LBH","CD6","JUNB"),
+                     .key.genes = c("PRDM1","SGK1","LBH","CD6","JUNB","ID3"),
                      fwer.cutoff = .01,
                      qv.cutoff = .2,
                      n.top = 5)
@@ -8380,5 +8380,46 @@ hc.ms.deg[, c("ensembl_gene_id", "hgnc_symbol") := tstrsplit(`gene`, split="_")]
     select(PRDM1_short, PRDM1_long, barcode, batch) %>% 
     left_join(final.cell.type) %>%
     na.omit()
+
+prdm1.aggregate <- 
+    rbind(
+        dcast(.data,
+              subject + disease ~ celltype,
+              fun.aggregate = function(x) mean(log1p(x)),
+              value.var = "PRDM1_short") %>%
+        melt(id.vars = c("subject", "disease")) %>%
+        mutate(type="short"),
+        dcast(.data,
+              subject + disease ~ celltype,
+              fun.aggregate = function(x) mean(log1p(x)),
+              value.var = "PRDM1_long") %>%
+        melt(id.vars = c("subject","disease")) %>%
+        mutate(type="long")
+    )
 ```
 
+
+```r
+.gg.plot(prdm1.aggregate, aes(disease, value, group = disease, fill = disease)) +
+    facet_grid(type~variable, scales="free") +
+    geom_boxplot(linewidth=.1) +
+    geom_jitter(position = position_jitter(w = 0.1, h = 0), stroke = 0) +
+    ylab("average expression (log1p)") +
+    xlab("disease status") +
+    scale_fill_brewer("disease", palette = "Set2")
+```
+
+![](Fig/STEP3/unnamed-chunk-18-1.png)<!-- -->
+
+
+```r
+.gg.plot(prdm1.aggregate, aes(type, value, group = type, fill = type)) +
+    facet_grid(disease~variable, scales="free") +
+    geom_boxplot(linewidth=.1) +
+    geom_jitter(position = position_jitter(w = 0.1, h = 0), stroke = 0) +
+    ylab("average expression (log1p)") +
+    xlab("disease status") +
+    scale_fill_brewer("isoform", palette = "Set3")
+```
+
+![](Fig/STEP3/unnamed-chunk-19-1.png)<!-- -->
