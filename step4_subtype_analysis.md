@@ -2,7 +2,7 @@
 title: "Step 4: subtype analysis"
 author: Yongjin Park
 theme: jekyll-theme-minimal
-date: "2024-02-16"
+date: "2024-07-26"
 bibliography: "MS_Ref.bib"
 output:
   html_document:
@@ -17,7 +17,7 @@ output:
 * Marker genes well-known for mTconv cell subtype classification
 
 
-```r
+``` r
 .markers <-
     c("CCR4","CCR6","CXCR3","CXCR5",
       "ABCA1","GBP4","CDCA7L","ITM2C","NR1D1",
@@ -36,7 +36,7 @@ output:
 * Goal: Identify cellular states/subtypes in memory T cells
 
 
-```r
+``` r
 .hash.hdr <- "result/step1/hash"
 .hash.data <- fileset.list(.hash.hdr)
 .hash.info <- read.hash(.hash.data)
@@ -49,7 +49,7 @@ annot.dt <- fread("Tab/step2_cell_type.txt.gz") %>%
 ## 1. Memory T conventional
 
 
-```r
+``` r
 .full.data <- fileset.list("result/step1/final_matrix")
 .mkdir("result/step4/")
 .data <- fileset.list("result/step4/mtconv")
@@ -68,7 +68,7 @@ if.needed(.data, {
 ### Perform SVD and build batch-balancing kNN graph
 
 
-```r
+``` r
 .file <- "result/step4/mtconv_bbknn.rds"
 if.needed(.file, {
 
@@ -92,7 +92,7 @@ if.needed(.file, {
 ```
 
 
-```r
+``` r
 VD <- .bbknn$factors.adjusted
 rownames(VD) <- readLines(.data$col)
 plots <- lapply(1:9, pca.plot.vd, VD=pca.df(VD))
@@ -108,7 +108,7 @@ print(plt)
 ### A. Clustering cells by batch-balancing k-nearest neighbour graph
 
 
-```r
+``` r
 set.seed(1)
 .file <- "Tab/step4_mtconv_leiden.txt.gz"
 if.needed(.file, {
@@ -123,7 +123,7 @@ if.needed(.file, {
 
 
 
-```r
+``` r
 .file <- "Tab/step4_tumap_mtconv.txt.gz"
 if.needed(.file, {
 
@@ -153,7 +153,7 @@ if.needed(.file, {
 
 
 
-```r
+``` r
 .file <- "Tab/step4_tsne_mtconv.txt.gz"
 if.needed(.file, {
 
@@ -182,7 +182,7 @@ if.needed(.file, {
 ### B. What are the cell-cluster-specific marker genes?
 
 
-```r
+``` r
 .mkdir("Tab/")
 .file <- "Tab/step4_mtconv_gene_stat.txt.gz"
 if.needed(.file, {
@@ -199,7 +199,7 @@ marker.stat <- fread(.file, sep = "\t")
 ### C. Non-linear embedding to confirm the cell clusters of mTconv cells
 
 
-```r
+``` r
 .cells <-
     left_join(.umap.dt, .tsne.dt) %>%
     left_join(.hash.info) %>% 
@@ -213,19 +213,19 @@ marker.stat <- fread(.file, sep = "\t")
              tSNE2=median(tSNE2)),
            by = .(component, membership)]
 
-mtconv.cols <- .more.colors(nrow(.lab), nc.pal=5, .palette="Set1")
+mtconv.cols <- .more.colors(nrow(.lab), nc.pal=3, .palette="YlGnBu")
 
 p1 <-
-    .gg.plot(.cells, aes(UMAP1, UMAP2, color=as.factor(membership))) +
-    ggrastr::rasterise(geom_point(stroke=0, alpha=.8, size=.7), dpi=300) +
+    .gg.plot(.cells, aes(UMAP1, UMAP2, fill=as.factor(membership))) +
+    ggrastr::rasterise(geom_point(stroke=.2, alpha=.8, pch=21), dpi=300) +
     geom_text(aes(label=membership), data=.lab, size=4, color="black") +
-    scale_color_manual(values = mtconv.cols, guide="none")
+    scale_fill_manual(values = mtconv.cols, guide="none")
 
 p2 <-
-    .gg.plot(.cells, aes(tSNE1, tSNE2, color=as.factor(membership))) +
-    ggrastr::rasterise(geom_point(stroke=0, alpha=.8, size=.7), dpi=300) +
+    .gg.plot(.cells, aes(tSNE1, tSNE2, fill=as.factor(membership))) +
+    ggrastr::rasterise(geom_point(stroke=.2, alpha=.8, pch=21), dpi=300) +
     geom_text(aes(label=membership), data=.lab, size=4, color="black") +
-    scale_color_manual(values = mtconv.cols, guide="none")
+    scale_fill_manual(values = mtconv.cols, guide="none")
 
 plt <- p1 | p2
 print(plt)
@@ -239,7 +239,7 @@ print(plt)
 ##### Confirm batch/individual-specific effects
 
 
-```r
+``` r
 nn <- length(unique(.cells$subject))
 .cols <- .more.colors(nn, nc.pal=7, .palette="Set2")
 
@@ -281,7 +281,7 @@ print(plt)
 **NOTE** The colors are standardized `log1p` expression across genes and cells.
 
 
-```r
+``` r
 .cells <- .leiden %>%
     left_join(.hash.info)
 x.melt <- bbknn.x.melt(.data, .bbknn, .markers)
@@ -291,7 +291,7 @@ x.melt <- bbknn.x.melt(.data, .bbknn, .markers)
 ```
 
 
-```r
+``` r
 .sum <-
     .sum.subj[, .(x = median(x)), by = .(gene, membership)] %>%
     mutate(col = `gene`, row = membership, weight = x) %>%
@@ -318,7 +318,7 @@ print(plt)
 
 
 
-```r
+``` r
 .dt <- copy(.sum.subj) %>%
     mutate(gene = factor(`gene`, .marker.order)) %>%
     mutate(t = subject %&% "." %&% membership)
@@ -345,7 +345,7 @@ print(plt)
 ### E. Basic statistics
 
 
-```r
+``` r
 .stat <-
     .cells[,
            .(N = .N),
@@ -363,7 +363,7 @@ print(plt)
 [PDF](Fig/STEP4//Fig_count_mtconv_prop.pdf)
 
 
-```r
+``` r
 plt <- .plt.sum.stat(.stat, .cols=mtconv.cols, show.prop = F) + ggtitle("mTconv")
 print(plt)
 ```
@@ -374,7 +374,7 @@ print(plt)
 [PDF](Fig/STEP4//Fig_count_mtconv_tot.pdf)
 
 
-```r
+``` r
 .stat.tot <-
     .cells[,
            .(N = .N),
@@ -393,7 +393,7 @@ print(plt)
 [PDF](Fig/STEP4//Fig_count_merged_mtconv_prop.pdf)
 
 
-```r
+``` r
 plt <- .plt.sum.stat(.stat.tot, .cols=mtconv.cols, show.prop = F) + ggtitle("mTconv")
 print(plt)
 ```
@@ -406,7 +406,7 @@ print(plt)
 ## 2. Memory Treg cells
 
 
-```r
+``` r
 .full.data <- fileset.list("result/step1/final_matrix")
 .mkdir("result/step4/")
 .data <- fileset.list("result/step4/mtreg")
@@ -426,7 +426,7 @@ if.needed(.data, {
 ### Perform outlier Q/C to detect and remove batch-specific cells
 
 
-```r
+``` r
 .file <- "result/step4/mtreg_svd.rds"
 
 if.needed(.file, {
@@ -441,7 +441,7 @@ if.needed(.file, {
 ##### Show PCs to reveal potential biases
 
 
-```r
+``` r
 V <- sweep(.svd$V, 2, .svd$D, `*`)
 rownames(V) <- readLines(.data$col)
 plots <- lapply(1:9, pca.plot.vd, VD=pca.df(V))
@@ -454,7 +454,7 @@ print(plt)
 * We found strong bimodal distributions for the PC #2
 
 
-```r
+``` r
 par(mfrow=c(1,5))
 for(k in 1:5){
     hist(.svd$V[,k], 50, main = "PC" %&% k, xlab="")
@@ -466,7 +466,7 @@ for(k in 1:5){
 ##### Identify outlier cells in gene expression data
 
 
-```r
+``` r
 set.seed(1)
 .kmeans <- kmeans(.svd$V[, 1:5], 2, nstart = 100)
 k.select <- which.max(table(.kmeans$cluster))
@@ -474,7 +474,7 @@ k.select <- which.max(table(.kmeans$cluster))
 ```
 
 
-```r
+``` r
 V <- .svd$V; rownames(V) <- readLines(.data$col)
 .vd <- pca.df(V)
 .vd[, batch := as.factor(.kmeans$cluster)]
@@ -487,7 +487,7 @@ print(plt)
 ![](Fig/STEP4/Fig_mtreg_PC_kmeans-1.png)<!-- -->
 
 
-```r
+``` r
 plt <- diagnostic.density.kmeans(.data, .kmeans)
 print(plt)
 ```
@@ -497,7 +497,7 @@ print(plt)
 
 
 
-```r
+``` r
 .file <- "result/step4/qc_mtreg_svd.rds"
 
 if.needed(.file, {
@@ -519,14 +519,14 @@ print(plt)
 [PDF](Fig/STEP4//Fig_svd_batch_mtreg.pdf)
 
 
-```r
+``` r
 .data <- .mtreg.qc.data
 ```
 
 ### Perform SVD and build batch-balancing kNN graph
 
 
-```r
+``` r
 .file <- "result/step4/mtreg_bbknn.rds"
 
 if.needed(.file, {
@@ -552,7 +552,7 @@ if.needed(.file, {
 ### A. Clustering cells by batch-balancing k-nearest neighbour graph
 
 
-```r
+``` r
 .file <- "Tab/step4_mtreg_leiden.txt.gz"
 if.needed(.file, {
     .tags <- readLines(.data$col)
@@ -566,7 +566,7 @@ if.needed(.file, {
 
 
 
-```r
+``` r
 .file <- "Tab/step4_tumap_mtreg.txt.gz"
 if.needed(.file, {
 
@@ -595,7 +595,7 @@ if.needed(.file, {
 [**DOWNLOAD:** mtreg UMAP results](Tab/step4_tumap_mtreg.txt.gz)
 
 
-```r
+``` r
 .file <- "Tab/step4_tsne_mtreg.txt.gz"
 if.needed(.file, {
 
@@ -623,7 +623,7 @@ if.needed(.file, {
 ### B. What are the cell-cluster-specific marker genes?
 
 
-```r
+``` r
 .mkdir("Tab/")
 .file <- "Tab/step4_mtreg_gene_stat.txt.gz"
 if.needed(.file, {
@@ -639,7 +639,7 @@ marker.stat <- fread(.file, sep = "\t")
 ### C. Non-linear embedding to confirm the cell clusters of mtreg cells
 
 
-```r
+``` r
 .cells <-
     left_join(.umap.dt, .tsne.dt) %>%
     left_join(.leiden) %>%
@@ -681,7 +681,7 @@ print(plt)
 ##### Confirm batch/individual-specific effects
 
 
-```r
+``` r
 nn <- length(unique(.cells$subject))
 .cols <- .more.colors(nn, nc.pal=5, .palette="Set1")
 
@@ -723,7 +723,7 @@ print(plt)
 **NOTE** The colors are standardized `log1p` expression across genes and cells.
 
 
-```r
+``` r
 .cells <- .leiden %>% left_join(.hash.info)
 x.melt <- bbknn.x.melt(.data, .bbknn, .markers)
 .dt <- x.melt %>% left_join(.cells) %>% na.omit()
@@ -732,7 +732,7 @@ x.melt <- bbknn.x.melt(.data, .bbknn, .markers)
 ```
 
 
-```r
+``` r
 .sum <-
     .sum.subj[, .(x = median(x)), by = .(gene, membership)] %>%
     mutate(col = `gene`, row = membership, weight = x) %>%
@@ -757,7 +757,7 @@ print(plt)
 
 
 
-```r
+``` r
 .dt <- copy(.sum.subj) %>%
     mutate(gene = factor(`gene`, .marker.order)) %>%
     mutate(t = subject %&% "." %&% membership)
@@ -785,7 +785,7 @@ print(plt)
 ### E. Basic statistics
 
 
-```r
+``` r
 .stat <-
     .cells[,
            .(N = .N),
@@ -803,7 +803,7 @@ print(plt)
 [PDF](Fig/STEP4//Fig_count_mtreg_prop.pdf)
 
 
-```r
+``` r
 plt <- .plt.sum.stat(.stat, .cols=mtreg.cols, show.prop = F) + ggtitle("mtreg")
 print(plt)
 ```
@@ -814,7 +814,7 @@ print(plt)
 [PDF](Fig/STEP4//Fig_count_mtreg_tot.pdf)
 
 
-```r
+``` r
 .stat.tot <-
     .cells[,
            .(N = .N),
@@ -833,7 +833,7 @@ print(plt)
 [PDF](Fig/STEP4//Fig_count_merged_mtreg_prop.pdf)
 
 
-```r
+``` r
 plt <- .plt.sum.stat(.stat.tot, .cols=mtreg.cols, show.prop = F) + ggtitle("mtreg")
 print(plt)
 ```
