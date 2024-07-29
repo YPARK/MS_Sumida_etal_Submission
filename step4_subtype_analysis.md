@@ -2,7 +2,7 @@
 title: "Step 4: subtype analysis"
 author: Yongjin Park
 theme: jekyll-theme-minimal
-date: "2024-07-26"
+date: "2024-07-29"
 bibliography: "MS_Ref.bib"
 output:
   html_document:
@@ -217,13 +217,13 @@ mtconv.cols <- .more.colors(nrow(.lab), nc.pal=3, .palette="YlGnBu")
 
 p1 <-
     .gg.plot(.cells, aes(UMAP1, UMAP2, fill=as.factor(membership))) +
-    ggrastr::rasterise(geom_point(stroke=.2, alpha=.8, pch=21), dpi=300) +
+    ggrastr::rasterise(geom_point(stroke=.2, alpha=.8, pch=21, size=.7), dpi=300) +
     geom_text(aes(label=membership), data=.lab, size=4, color="black") +
     scale_fill_manual(values = mtconv.cols, guide="none")
 
 p2 <-
     .gg.plot(.cells, aes(tSNE1, tSNE2, fill=as.factor(membership))) +
-    ggrastr::rasterise(geom_point(stroke=.2, alpha=.8, pch=21), dpi=300) +
+    ggrastr::rasterise(geom_point(stroke=.2, alpha=.8, pch=21, size=.7), dpi=300) +
     geom_text(aes(label=membership), data=.lab, size=4, color="black") +
     scale_fill_manual(values = mtconv.cols, guide="none")
 
